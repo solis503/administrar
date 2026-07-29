@@ -1,0 +1,27 @@
+# Dependencias
+node_modules/
+.next/
+
+# Variables de entorno (NO subir llaves reales)
+.env.local
+.env*.local
+
+# Build
+out/
+build/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug
+npm-debug.log*
+
+# Cache
+.cache/
+*.tsbuildinfo

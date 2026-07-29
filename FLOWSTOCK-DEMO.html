@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowStock Pro - Demo Completa</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .gradient-bg { background: linear-gradient(135deg, #2563eb 0%, #4f46e5 50%, #6366f1 100%); }
+        .card-hover { transition: all 0.3s ease; }
+        .card-hover:hover { transform: translateY(-5px); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); }
+        .fade-in { animation: fadeIn 0.5s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Login Screen -->
+    <div id="loginScreen" class="min-h-screen gradient-bg flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 fade-in">
+            <!-- Language Selector -->
+            <div class="absolute top-4 right-4 flex gap-2">
+                <button id="langES" onclick="setLanguage('es')" class="px-3 py-1.5 rounded-lg text-sm font-semibold bg-white text-blue-700">🇪🇸 ES</button>
+                <button id="langEN" onclick="setLanguage('en')" class="px-3 py-1.5 rounded-lg text-sm font-semibold bg-white/20 text-white">🇺🇸 EN</button>
+            </div>
+
+            <!-- Logo -->
+            <div class="text-center mb-8">
+                <div class="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl mb-4 shadow-lg">
+                    <i class="fas fa-cubes text-white text-3xl"></i>
+                </div>
+                <h1 class="text-3xl font-bold text-gray-900" id="appName">FlowStock Pro</h1>
+                <p class="text-gray-500 mt-1 text-sm" id="tagline">Sistema de Inventario y Punto de Venta</p>
+            </div>
+
+            <!-- Login Method Tabs -->
+            <div class="grid grid-cols-2 gap-2 mb-6">
+                <button id="tabEmail" onclick="switchLoginMethod('email')" class="py-2.5 rounded-xl text-sm font-semibold border-2 border-blue-600 bg-blue-50 text-blue-700">
+                    <i class="fas fa-envelope mr-2"></i><span id="emailTab">Email</span>
+                </button>
+                <button id="tabPhone" onclick="switchLoginMethod('phone')" class="py-2.5 rounded-xl text-sm font-semibold border-2 border-gray-200 text-gray-500">
+                    <i class="fas fa-phone mr-2"></i><span id="phoneTab">Teléfono</span>
+                </button>
+            </div>
+
+            <!-- Login Form -->
+            <form id="loginForm" class="space-y-4">
+                <div id="emailField">
+                    <label class="block text-sm font-medium text-gray-700 mb-1" id="emailLabel">Correo electrónico</label>
+                    <input type="email" id="emailInput" class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="tu@email.com">
+                </div>
+                <div id="phoneField" class="hidden">
+                    <label class="block text-sm font-medium text-gray-700 mb-1" id="phoneLabel">Número de teléfono</label>
+                    <input type="tel" id="phoneInput" class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="+503 7000-0000">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1" id="passwordLabel">Contraseña</label>
+                    <input type="password" id="passwordInput" class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="••••••••">
+                </div>
+                <button type="button" onclick="handleLogin()" class="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-xl shadow-lg transition">
+                    <span id="loginBtn">Entrar</span>
+                </button>
+            </form>
+
+            <p class="text-center text-gray-500 mt-6 text-sm">
+                <span id="noAccount">¿No tienes cuenta?</span>
+                <button onclick="showRegister()" class="text-blue-600 hover:text-blue-700 font-bold ml-1" id="registerLink">Regístrate gratis</button>
+            </p>
+        </div>
+    </div>
+
+    <!-- Register Screen -->
+    <div id="registerScreen" class="min-h-screen gradient-bg flex items-center justify-center p-4 hidden">
+        <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 fade-in">
+            <div class="text-center mb-8">
+                <div class="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl mb-4 shadow-lg">
+                    <i class="fas fa-cubes text-white text-3xl"></i>
+                </div>
+                <h1 class="text-3xl font-bold text-gray-900" id="registerTitle">Crear Cuenta</h1>
+            </div>
+
+            <form class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1" id="businessNameLabel">Nombre de tu negocio *</label>
+                    <input type="text" id="businessNameInput" class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Ej: Mi Tiendita">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1" id="registerEmailLabel">Correo electrónico *</label>
+                    <input type="email" id="registerEmailInput" class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="tu@email.com">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1" id="registerPhoneLabel">Número de teléfono (opcional)</label>
+                    <input type="tel" id="registerPhoneInput" class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="+503 7000-0000">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1" id="registerPasswordLabel">Contraseña *</label>
+                    <input type="password" id="registerPasswordInput" class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Mínimo 6 caracteres">
+                </div>
+                <button type="button" onclick="handleRegister()" class="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-xl shadow-lg transition">
+                    <span id="registerBtn">Crear Cuenta</span>
+                </button>
+            </form>
+
+            <p class="text-center text-gray-500 mt-6 text-sm">
+                <span id="hasAccount">¿Ya tienes cuenta?</span>
+                <button onclick="showLogin()" class="text-blue-600 hover:text-blue-700 font-bold ml-1" id="loginLink">Inicia sesión</button>
+            </p>
+        </div>
+    </div>
+
+    <!-- Dashboard Screen -->
+    <div id="dashboardScreen" class="min-h-screen bg-gray-50 hidden">
+        <!-- Sidebar -->
+        <aside class="fixed left-0 top-0 h-full w-64 bg-white shadow-lg z-40">
+            <div class="p-6 border-b border-gray-200">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center">
+                        <i class="fas fa-cubes text-white"></i>
+                    </div>
+                    <div>
+                        <h2 class="font-bold text-gray-900">FlowStock Pro</h2>
+                        <p class="text-xs text-gray-500" id="businessName">Mi Negocio</p>
+                    </div>
+                </div>
+            </div>
+            <nav class="p-4 space-y-2">
+                <button onclick="showSection('dashboard')" class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-blue-50 text-blue-700 font-semibold">
+                    <i class="fas fa-chart-line"></i><span id="navDashboard">Dashboard</span>
+                </button>
+                <button onclick="showSection('pos')" class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50">
+                    <i class="fas fa-cash-register"></i><span id="navPOS">Punto de Venta</span>
+                </button>
+                <button onclick="showSection('products')" class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50">
+                    <i class="fas fa-box"></i><span id="navProducts">Productos</span>
+                </button>
+                <button onclick="showSection('inventory')" class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50">
+                    <i class="fas fa-warehouse"></i><span id="navInventory">Inventario</span>
+                </button>
+                <button onclick="showSection('reports')" class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50">
+                    <i class="fas fa-chart-bar"></i><span id="navReports">Reportes</span>
+                </button>
+                <button onclick="showSection('suppliers')" class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50">
+                    <i class="fas fa-truck"></i><span id="navSuppliers">Proveedores</span>
+                </button>
+                <button onclick="showSection('clients')" class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50">
+                    <i class="fas fa-users"></i><span id="navClients">Clientes</span>
+                </button>
+                <button onclick="showSection('expenses')" class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50">
+                    <i class="fas fa-money-bill-wave"></i><span id="navExpenses">Gastos</span>
+                </button>
+            </nav>
+            <div class="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200">
+                <button onclick="handleLogout()" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-600 hover:bg-red-50">
+                    <i class="fas fa-sign-out-alt"></i><span id="navLogout">Cerrar Sesión</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="ml-64 p-8">
+            <!-- Dashboard Section -->
+            <div id="dashboardSection" class="section fade-in">
+                <h1 class="text-3xl font-bold text-gray-900 mb-8" id="dashboardTitle">Dashboard</h1>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                    <div class="bg-white rounded-2xl p-6 shadow-sm card-hover">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                                <i class="fas fa-shopping-cart text-blue-600 text-xl"></i>
+                            </div>
+                        </div>
+                        <p class="text-gray-500 text-sm mb-1" id="todaySalesLabel">Ventas de Hoy</p>
+                        <p class="text-3xl font-bold text-gray-900">$1,234</p>
+                        <p class="text-xs text-green-600 mt-2"><i class="fas fa-arrow-up"></i> 12% vs ayer</p>
+                    </div>
+                    <div class="bg-white rounded-2xl p-6 shadow-sm card-hover">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center">
+                                <i class="fas fa-receipt text-red-600 text-xl"></i>
+                            </div>
+                        </div>
+                        <p class="text-gray-500 text-sm mb-1" id="todayExpensesLabel">Gastos de Hoy</p>
+                        <p class="text-3xl font-bold text-gray-900">$456</p>
+                        <p class="text-xs text-red-600 mt-2"><i class="fas fa-arrow-up"></i> 5% vs ayer</p>
+                    </div>
+                    <div class="bg-white rounded-2xl p-6 shadow-sm card-hover">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+                                <i class="fas fa-dollar-sign text-green-600 text-xl"></i>
+                            </div>
+                        </div>
+                        <p class="text-gray-500 text-sm mb-1" id="profitLabel">Ganancia</p>
+                        <p class="text-3xl font-bold text-gray-900">$778</p>
+                        <p class="text-xs text-green-600 mt-2"><i class="fas fa-arrow-up"></i> 18% vs ayer</p>
+                    </div>
+                    <div class="bg-white rounded-2xl p-6 shadow-sm card-hover">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 bg-yellow-100 rounded-xl flex items-center justify-center">
+                                <i class="fas fa-exclamation-triangle text-yellow-600 text-xl"></i>
+                            </div>
+                        </div>
+                        <p class="text-gray-500 text-sm mb-1" id="stockAlertsLabel">Alertas de Stock</p>
+                        <p class="text-3xl font-bold text-gray-900">8</p>
+                        <p class="text-xs text-yellow-600 mt-2">Productos bajos</p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-white rounded-2xl p-6 shadow-sm">
+                        <h3 class="text-xl font-bold text-gray-900 mb-4" id="lowStockTitle">Stock Bajo</h3>
+                        <div class="space-y-3">
+                            <div class="flex items-center justify-between p-3 bg-yellow-50 rounded-xl">
+                                <span class="font-medium">Coca-Cola 600ml</span>
+                                <span class="text-yellow-700 font-bold">3 unidades</span>
+                            </div>
+                            <div class="flex items-center justify-between p-3 bg-red-50 rounded-xl">
+                                <span class="font-medium">Pan Francés</span>
+                                <span class="text-red-700 font-bold">0 unidades</span>
+                            </div>
+                            <div class="flex items-center justify-between p-3 bg-yellow-50 rounded-xl">
+                                <span class="font-medium">Queso Mozarella</span>
+                                <span class="text-yellow-700 font-bold">2 kg</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-2xl p-6 shadow-sm">
+                        <h3 class="text-xl font-bold text-gray-900 mb-4" id="recentSalesTitle">Últimas Ventas</h3>
+                        <div class="space-y-3">
+                            <div class="flex items-center justify-between p-3 hover:bg-gray-50 rounded-xl">
+                                <div>
+                                    <p class="font-medium">Venta #1234</p>
+                                    <p class="text-sm text-gray-500">Hace 5 min • 3 productos</p>
+                                </div>
+                                <div class="text-right">
+                                    <p class="font-bold text-green-600">$85.50</p>
+                                    <span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">Efectivo</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between p-3 hover:bg-gray-50 rounded-xl">
+                                <div>
+                                    <p class="font-medium">Venta #1233</p>
+                                    <p class="text-sm text-gray-500">Hace 15 min • 2 productos</p>
+                                </div>
+                                <div class="text-right">
+                                    <p class="font-bold text-green-600">$45.00</p>
+                                    <span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">Tarjeta</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Other Sections (Placeholder) -->
+            <div id="posSection" class="section hidden">
+                <h1 class="text-3xl font-bold text-gray-900 mb-8">Punto de Venta</h1>
+                <div class="bg-white rounded-2xl p-6 shadow-sm">
+                    <p class="text-gray-500">Aquí va el módulo de Punto de Venta con escáner de códigos, carrito, métodos de pago, etc.</p>
+                </div>
+            </div>
+            <div id="productsSection" class="section hidden">
+                <h1 class="text-3xl font-bold text-gray-900 mb-8">Productos</h1>
+                <div class="bg-white rounded-2xl p-6 shadow-sm">
+                    <p class="text-gray-500">Gestión de productos simples, recetas e insumos</p>
+                </div>
+            </div>
+            <div id="inventorySection" class="section hidden">
+                <h1 class="text-3xl font-bold text-gray-900 mb-8">Inventario</h1>
+                <div class="bg-white rounded-2xl p-6 shadow-sm">
+                    <p class="text-gray-500">Control de entradas, salidas y movimientos</p>
+                </div>
+            </div>
+            <div id="reportsSection" class="section hidden">
+                <h1 class="text-3xl font-bold text-gray-900 mb-8">Reportes</h1>
+                <div class="bg-white rounded-2xl p-6 shadow-sm">
+                    <p class="text-gray-500">Gráficos y análisis de ventas</p>
+                </div>
+            </div>
+            <div id="suppliersSection" class="section hidden">
+                <h1 class="text-3xl font-bold text-gray-900 mb-8">Proveedores</h1>
+                <div class="bg-white rounded-2xl p-6 shadow-sm">
+                    <p class="text-gray-500">Gestión de proveedores y órdenes de compra</p>
+                </div>
+            </div>
+            <div id="clientsSection" class="section hidden">
+                <h1 class="text-3xl font-bold text-gray-900 mb-8">Clientes</h1>
+                <div class="bg-white rounded-2xl p-6 shadow-sm">
+                    <p class="text-gray-500">Base de datos de clientes y programa de lealtad</p>
+                </div>
+            </div>
+            <div id="expensesSection" class="section hidden">
+                <h1 class="text-3xl font-bold text-gray-900 mb-8">Gastos</h1>
+                <div class="bg-white rounded-2xl p-6 shadow-sm">
+                    <p class="text-gray-500">Registro de gastos operativos</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Translations
+        const translations = {
+            es: {
+                appName: 'FlowStock Pro',
+                tagline: 'Sistema de Inventario y Punto de Venta',
+                emailTab: 'Email',
+                phoneTab: 'Teléfono',
+                emailLabel: 'Correo electrónico',
+                phoneLabel: 'Número de teléfono',
+                passwordLabel: 'Contraseña',
+                loginBtn: 'Entrar',
+                noAccount: '¿No tienes cuenta?',
+                registerLink: 'Regístrate gratis',
+                registerTitle: 'Crear Cuenta',
+                businessNameLabel: 'Nombre de tu negocio *',
+                registerEmailLabel: 'Correo electrónico *',
+                registerPhoneLabel: 'Número de teléfono (opcional)',
+                registerPasswordLabel: 'Contraseña *',
+                registerBtn: 'Crear Cuenta',
+                hasAccount: '¿Ya tienes cuenta?',
+                loginLink: 'Inicia sesión',
+                navDashboard: 'Dashboard',
+                navPOS: 'Punto de Venta',
+                navProducts: 'Productos',
+                navInventory: 'Inventario',
+                navReports: 'Reportes',
+                navSuppliers: 'Proveedores',
+                navClients: 'Clientes',
+                navExpenses: 'Gastos',
+                navLogout: 'Cerrar Sesión',
+                dashboardTitle: 'Dashboard',
+                todaySalesLabel: 'Ventas de Hoy',
+                todayExpensesLabel: 'Gastos de Hoy',
+                profitLabel: 'Ganancia',
+                stockAlertsLabel: 'Alertas de Stock',
+                lowStockTitle: 'Stock Bajo',
+                recentSalesTitle: 'Últimas Ventas'
+            },
+            en: {
+                appName: 'FlowStock Pro',
+                tagline: 'Inventory & Point of Sale System',
+                emailTab: 'Email',
+                phoneTab: 'Phone',
+                emailLabel: 'Email address',
+                phoneLabel: 'Phone number',
+                passwordLabel: 'Password',
+                loginBtn: 'Sign In',
+                noAccount: "Don't have an account?",
+                registerLink: 'Register free',
+                registerTitle: 'Create Account',
+                businessNameLabel: 'Your business name *',
+                registerEmailLabel: 'Email address *',
+                registerPhoneLabel: 'Phone number (optional)',
+                registerPasswordLabel: 'Password *',
+                registerBtn: 'Create Account',
+                hasAccount: 'Already have an account?',
+                loginLink: 'Sign in',
+                navDashboard: 'Dashboard',
+                navPOS: 'Point of Sale',
+                navProducts: 'Products',
+                navInventory: 'Inventory',
+                navReports: 'Reports',
+                navSuppliers: 'Suppliers',
+                navClients: 'Clients',
+                navExpenses: 'Expenses',
+                navLogout: 'Sign Out',
+                dashboardTitle: 'Dashboard',
+                todaySalesLabel: "Today's Sales",
+                todayExpensesLabel: "Today's Expenses",
+                profitLabel: 'Profit',
+                stockAlertsLabel: 'Stock Alerts',
+                lowStockTitle: 'Low Stock',
+                recentSalesTitle: 'Recent Sales'
+            }
+        };
+
+        let currentLang = 'es';
+        let loginMethod = 'email';
+
+        function setLanguage(lang) {
+            currentLang = lang;
+            const t = translations[lang];
+            
+            // Update language buttons
+            document.getElementById('langES').className = lang === 'es' 
+                ? 'px-3 py-1.5 rounded-lg text-sm font-semibold bg-white text-blue-700'
+                : 'px-3 py-1.5 rounded-lg text-sm font-semibold bg-white/20 text-white';
+            document.getElementById('langEN').className = lang === 'en'
+                ? 'px-3 py-1.5 rounded-lg text-sm font-semibold bg-white text-blue-700'
+                : 'px-3 py-1.5 rounded-lg text-sm font-semibold bg-white/20 text-white';
+
+            // Update all text elements
+            document.getElementById('appName').textContent = t.appName;
+            document.getElementById('tagline').textContent = t.tagline;
+            document.getElementById('emailTab').textContent = t.emailTab;
+            document.getElementById('phoneTab').textContent = t.phoneTab;
+            document.getElementById('emailLabel').textContent = t.emailLabel;
+            document.getElementById('phoneLabel').textContent = t.phoneLabel;
+            document.getElementById('passwordLabel').textContent = t.passwordLabel;
+            document.getElementById('loginBtn').textContent = t.loginBtn;
+            document.getElementById('noAccount').textContent = t.noAccount;
+            document.getElementById('registerLink').textContent = t.registerLink;
+            document.getElementById('registerTitle').textContent = t.registerTitle;
+            document.getElementById('businessNameLabel').textContent = t.businessNameLabel;
+            document.getElementById('registerEmailLabel').textContent = t.registerEmailLabel;
+            document.getElementById('registerPhoneLabel').textContent = t.registerPhoneLabel;
+            document.getElementById('registerPasswordLabel').textContent = t.registerPasswordLabel;
+            document.getElementById('registerBtn').textContent = t.registerBtn;
+            document.getElementById('hasAccount').textContent = t.hasAccount;
+            document.getElementById('loginLink').textContent = t.loginLink;
+            document.getElementById('navDashboard').textContent = t.navDashboard;
+            document.getElementById('navPOS').textContent = t.navPOS;
+            document.getElementById('navProducts').textContent = t.navProducts;
+            document.getElementById('navInventory').textContent = t.navInventory;
+            document.getElementById('navReports').textContent = t.navReports;
+            document.getElementById('navSuppliers').textContent = t.navSuppliers;
+            document.getElementById('navClients').textContent = t.navClients;
+            document.getElementById('navExpenses').textContent = t.navExpenses;
+            document.getElementById('navLogout').textContent = t.navLogout;
+            document.getElementById('dashboardTitle').textContent = t.dashboardTitle;
+            document.getElementById('todaySalesLabel').textContent = t.todaySalesLabel;
+            document.getElementById('todayExpensesLabel').textContent = t.todayExpensesLabel;
+            document.getElementById('profitLabel').textContent = t.profitLabel;
+            document.getElementById('stockAlertsLabel').textContent = t.stockAlertsLabel;
+            document.getElementById('lowStockTitle').textContent = t.lowStockTitle;
+            document.getElementById('recentSalesTitle').textContent = t.recentSalesTitle;
+        }
+
+        function switchLoginMethod(method) {
+            loginMethod = method;
+            const emailField = document.getElementById('emailField');
+            const phoneField = document.getElementById('phoneField');
+            const tabEmail = document.getElementById('tabEmail');
+            const tabPhone = document.getElementById('tabPhone');
+
+            if (method === 'email') {
+                emailField.classList.remove('hidden');
+                phoneField.classList.add('hidden');
+                tabEmail.className = 'py-2.5 rounded-xl text-sm font-semibold border-2 border-blue-600 bg-blue-50 text-blue-700';
+                tabPhone.className = 'py-2.5 rounded-xl text-sm font-semibold border-2 border-gray-200 text-gray-500';
+            } else {
+                emailField.classList.add('hidden');
+                phoneField.classList.remove('hidden');
+                tabPhone.className = 'py-2.5 rounded-xl text-sm font-semibold border-2 border-blue-600 bg-blue-50 text-blue-700';
+                tabEmail.className = 'py-2.5 rounded-xl text-sm font-semibold border-2 border-gray-200 text-gray-500';
+            }
+        }
+
+        function showRegister() {
+            document.getElementById('loginScreen').classList.add('hidden');
+            document.getElementById('registerScreen').classList.remove('hidden');
+        }
+
+        function showLogin() {
+            document.getElementById('registerScreen').classList.add('hidden');
+            document.getElementById('loginScreen').classList.remove('hidden');
+        }
+
+        function handleLogin() {
+            // Simulate login
+            document.getElementById('loginScreen').classList.add('hidden');
+            document.getElementById('dashboardScreen').classList.remove('hidden');
+        }
+
+        function handleRegister() {
+            const businessName = document.getElementById('businessNameInput').value;
+            if (businessName) {
+                document.getElementById('businessName').textContent = businessName;
+            }
+            document.getElementById('registerScreen').classList.add('hidden');
+            document.getElementById('dashboardScreen').classList.remove('hidden');
+        }
+
+        function handleLogout() {
+            document.getElementById('dashboardScreen').classList.add('hidden');
+            document.getElementById('loginScreen').classList.remove('hidden');
+        }
+
+        function showSection(section) {
+            // Hide all sections
+            document.querySelectorAll('.section').forEach(el => el.classList.add('hidden'));
+            // Show selected section
+            document.getElementById(section + 'Section').classList.remove('hidden');
+            
+            // Update nav buttons
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.classList.remove('bg-blue-50', 'text-blue-700', 'font-semibold');
+                btn.classList.add('text-gray-600', 'hover:bg-gray-50');
+            });
+            event.target.closest('.nav-btn').classList.remove('text-gray-600', 'hover:bg-gray-50');
+            event.target.closest('.nav-btn').classList.add('bg-blue-50', 'text-blue-700', 'font-semibold');
+        }
+
+        // Initialize with Spanish
+        setLanguage('es');
+    </script>
+</body>
+</html>
