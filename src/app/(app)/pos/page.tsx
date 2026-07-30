@@ -2,25 +2,9 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
 
-interface Product {
-  id: string
-  name: string
-  price: number
-  stock: number
-  unit: string
-  product_type: string
-}
-
-interface CartItem {
-  id: string
-  name: string
-  price: number
-  qty: number
-}
-
 export default function POSPage() {
-  const [products, setProducts] = useState<Product[]>([])
-  const [cart, setCart] = useState<CartItem[]>([])
+  const [products, setProducts] = useState<any[]>([])
+  const [cart, setCart] = useState<any[]>([])
   const [search, setSearch] = useState('')
   const [showPayment, setShowPayment] = useState(false)
   const [showSaleOk, setShowSaleOk] = useState(false)
@@ -49,7 +33,7 @@ export default function POSPage() {
     setLoading(false)
   }
 
-  const addToCart = (product: Product) => {
+  const addToCart = (product: any) => {
     const existing = cart.find(i => i.id === product.id)
     if (existing) {
       if (existing.qty >= product.stock) return
@@ -90,7 +74,6 @@ export default function POSPage() {
     const paid = parseFloat(amountPaid) || total
     const change = paymentMethod === 'efectivo' ? Math.max(0, paid - total) : 0
 
-    // Registrar venta
     const { data: sale } = await supabase.from('sales').insert({
       business_id: business.id,
       user_id: user.id,
@@ -103,7 +86,6 @@ export default function POSPage() {
 
     if (!sale) return
 
-    // Registrar items y descontar stock
     for (const item of cart) {
       await supabase.from('sale_items').insert({
         sale_id: sale.id,
@@ -120,14 +102,6 @@ export default function POSPage() {
       } else {
         await supabase.rpc('decrement_stock', { p_product_id: item.id, p_quantity: item.qty })
       }
-
-      await supabase.from('inventory_movements').insert({
-        business_id: business.id,
-        product_id: item.id,
-        type: 'venta',
-        quantity: item.qty,
-        notes: `Venta #${sale.id.slice(0, 8)}`,
-      })
     }
 
     setSaleResult({ total, change, method: paymentMethod, products: cart })
@@ -142,13 +116,7 @@ export default function POSPage() {
     const items = saleResult.products.map((p: any) => `<tr><td style="padding:2px 0">${p.name} x${p.qty}</td><td style="text-align:right">${curr}${(p.price * p.qty).toFixed(2)}</td></tr>`).join('')
     const win = window.open('', '_blank', 'width=350,height=600')
     if (!win) return
-    win.document.write(`<html><head><title>Ticket</title><style>body{font-family:monospace;font-size:12px;padding:10px;max-width:300px;margin:0 auto}table{width:100%;border-collapse:collapse}.c{text-align:center}.line{border-top:1px dashed #000;margin:5px 0}</style></head><body>
-      <div class="c"><strong>${business.name}</strong><br>${new Date().toLocaleString('es')}<br>Ticket #${Date.now().toString().slice(-6)}</div>
-      <div class="line"></div><table>${items}</table><div class="line"></div>
-      <table><tr><td><strong>TOTAL</strong></td><td style="text-align:right"><strong>${curr}${saleResult.total.toFixed(2)}</strong></td></tr>
-      <tr><td>Método:</td><td style="text-align:right">${saleResult.method}</td></tr>
-      ${saleResult.method === 'efectivo' ? `<tr><td>Pagado:</td><td style="text-align:right">${curr}${(saleResult.total + saleResult.change).toFixed(2)}</td></tr><tr><td>Cambio:</td><td style="text-align:right">${curr}${saleResult.change.toFixed(2)}</td></tr>` : ''}
-      </table><div class="line"></div><div class="c">¡Gracias por su compra!</div></body></html>`)
+    win.document.write(`<html><head><title>Ticket</title><style>body{font-family:monospace;font-size:12px;padding:10px;max-width:300px;margin:0 auto}table{width:100%;border-collapse:collapse}.c{text-align:center}.line{border-top:1px dashed #000;margin:5px 0}</style></head><body><div class="c"><strong>${business.name}</strong><br>${new Date().toLocaleString('es')}<br>Ticket #${Date.now().toString().slice(-6)}</div><div class="line"></div><table>${items}</table><div class="line"></div><table><tr><td><strong>TOTAL</strong></td><td style="text-align:right"><strong>${curr}${saleResult.total.toFixed(2)}</strong></td></tr><tr><td>Método:</td><td style="text-align:right">${saleResult.method}</td></tr>${saleResult.method === 'efectivo' ? `<tr><td>Pagado:</td><td style="text-align:right">${curr}${(saleResult.total + saleResult.change).toFixed(2)}</td></tr><tr><td>Cambio:</td><td style="text-align:right">${curr}${saleResult.change.toFixed(2)}</td></tr>` : ''}</table><div class="line"></div><div class="c">¡Gracias por su compra!</div></body></html>`)
     win.document.close()
     win.print()
   }
@@ -159,10 +127,9 @@ export default function POSPage() {
 
   return (
     <div className="flex flex-col lg:flex-row gap-4" style={{ minHeight: 'calc(100vh - 6rem)' }}>
-      {/* Productos */}
       <div className="flex-1 flex flex-col">
         <h1 className="text-2xl font-bold mb-4">🛒 Punto de Venta</h1>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar producto..." className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none mb-4" />
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar producto..." className="w-full px-4 py-3 rounded-xl border outline-none mb-4" />
         <div className="flex-1 overflow-y-auto">
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
             {filtered.map(p => (
@@ -177,7 +144,6 @@ export default function POSPage() {
         </div>
       </div>
 
-      {/* Carrito */}
       <div className="lg:w-80 bg-white rounded-2xl shadow-sm border flex flex-col">
         <div className="p-4 border-b flex justify-between"><h2 className="font-semibold">🧾 Carrito</h2>{cart.length > 0 && <button onClick={() => setCart([])} className="text-xs text-red-500">Vaciar</button>}</div>
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -201,7 +167,6 @@ export default function POSPage() {
         </div>
       </div>
 
-      {/* Modal Pago */}
       {showPayment && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-6">
@@ -227,7 +192,6 @@ export default function POSPage() {
         </div>
       )}
 
-      {/* Venta Exitosa */}
       {showSaleOk && saleResult && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm p-8 text-center">
