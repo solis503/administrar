@@ -2,60 +2,73 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 export default function Sidebar({ userName, businessName, userRole }: { userName: string; businessName: string; userRole: string }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [permissions, setPermissions] = useState<any>({
+    dashboard: true, pos: true, products: true, inventory: true,
+    reports: true, suppliers: true, clients: true, expenses: true, settings: true
+  })
+
+  useEffect(() => { loadPermissions() }, [])
+
+  const loadPermissions = async () => {
+    if (userRole === 'owner') {
+      setPermissions({
+        dashboard: true, pos: true, products: true, inventory: true,
+        reports: true, suppliers: true, clients: true, expenses: true, settings: true
+      })
+      return
+    }
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('permissions, role')
+      .eq('user_id', user.id)
+      .eq('active', true)
+      .single()
+
+    if (profile && profile.permissions) {
+      setPermissions({
+        ...profile.permissions,
+        settings: profile.role === 'owner'
+      })
+    } else if (profile?.role === 'manager') {
+      setPermissions({
+        dashboard: true, pos: true, products: true, inventory: true,
+        reports: true, suppliers: true, clients: true, expenses: true, settings: false
+      })
+    } else {
+      setPermissions({
+        dashboard: false, pos: true, products: false, inventory: false,
+        reports: false, suppliers: false, clients: true, expenses: false, settings: false
+      })
+    }
+  }
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
   }
 
-  // Definir opciones según el rol
-  const getNavItems = () => {
-    const items = []
-    
-    if (userRole === 'owner') {
-      // Propietario: ve TODO
-      items.push(
-        { href: '/dashboard', label: 'Dashboard', icon: '📊' },
-        { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
-        { href: '/products', label: 'Productos', icon: '📦' },
-        { href: '/inventory', label: 'Inventario', icon: '🏷️' },
-        { href: '/reports', label: 'Reportes', icon: '📈' },
-        { href: '/suppliers', label: 'Proveedores', icon: '🚚' },
-        { href: '/clients', label: 'Clientes', icon: '👥' },
-        { href: '/expenses', label: 'Gastos', icon: '💸' },
-        { href: '/settings', label: 'Configuración', icon: '⚙️' }
-      )
-    } else if (userRole === 'manager') {
-      // Gerente: ve casi todo excepto configuración
-      items.push(
-        { href: '/dashboard', label: 'Dashboard', icon: '📊' },
-        { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
-        { href: '/products', label: 'Productos', icon: '📦' },
-        { href: '/inventory', label: 'Inventario', icon: '🏷️' },
-        { href: '/reports', label: 'Reportes', icon: '📈' },
-        { href: '/suppliers', label: 'Proveedores', icon: '🚚' },
-        { href: '/clients', label: 'Clientes', icon: '👥' },
-        { href: '/expenses', label: 'Gastos', icon: '💸' }
-      )
-    } else {
-      // Vendedor: solo POS y Clientes
-      items.push(
-        { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
-        { href: '/clients', label: 'Clientes', icon: '👥' }
-      )
-    }
-    
-    return items
-  }
-
-  const navItems = getNavItems()
+  const navItems = [
+    permissions.dashboard && { href: '/dashboard', label: 'Dashboard', icon: '📊' },
+    permissions.pos && { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
+    permissions.products && { href: '/products', label: 'Productos', icon: '📦' },
+    permissions.inventory && { href: '/inventory', label: 'Inventario', icon: '🏷️' },
+    permissions.reports && { href: '/reports', label: 'Reportes', icon: '📈' },
+    permissions.suppliers && { href: '/suppliers', label: 'Proveedores', icon: '🚚' },
+    permissions.clients && { href: '/clients', label: 'Clientes', icon: '👥' },
+    permissions.expenses && { href: '/expenses', label: 'Gastos', icon: '💸' },
+    permissions.settings && { href: '/settings', label: 'Configuración', icon: '⚙️' },
+  ].filter(Boolean) as { href: string; label: string; icon: string }[]
 
   const roleBadge: any = { 
     owner: { l: 'Propietario', c: 'bg-yellow-100 text-yellow-700' }, 
@@ -72,8 +85,8 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
       <aside className={`fixed md:static inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 flex flex-col transform transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
         <div className="p-4 border-b border-gray-100">
           <Link href={navItems[0]?.href || '/pos'} className="flex items-center gap-3" onClick={() => setSidebarOpen(false)}>
-            <div className="w-10 h-10 bg-primary-100 rounded-xl flex items-center justify-center">
-              <svg className="w-5 h-5 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+            <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+              <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
             </div>
             <div><h2 className="font-bold text-gray-900 text-sm">FlowStock Pro</h2><p className="text-xs text-gray-500 truncate">{businessName}</p></div>
           </Link>
@@ -82,7 +95,7 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
           {navItems.map((item) => {
             const isActive = pathname === item.href
             return (
-              <Link key={item.href} href={item.href} onClick={() => setSidebarOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition text-left ${isActive ? 'bg-primary-50 text-primary-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
+              <Link key={item.href} href={item.href} onClick={() => setSidebarOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition text-left ${isActive ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
                 <span className="text-lg">{item.icon}</span><span>{item.label}</span>
               </Link>
             )
