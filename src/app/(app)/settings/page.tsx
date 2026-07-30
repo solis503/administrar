@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const [showAddEmployee, setShowAddEmployee] = useState(false)
   const [empForm, setEmpForm] = useState({ email: '', name: '', password: '', role: 'seller' })
   const [addingEmployee, setAddingEmployee] = useState(false)
+  const [debugInfo, setDebugInfo] = useState<string[]>([])
   const supabase = createClient()
 
   useEffect(() => { 
@@ -23,28 +24,55 @@ export default function SettingsPage() {
 
   const loadData = async () => {
     setLoading(true)
+    const logs: string[] = []
+    
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        console.log('No hay usuario')
+      // Paso 1: Obtener usuario
+      logs.push('🔍 Buscando usuario...')
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      
+      if (userError || !user) {
+        logs.push('❌ Error: No hay usuario logueado')
+        logs.push('Error: ' + (userError?.message || 'Desconocido'))
+        setDebugInfo(logs)
         setLoading(false)
         return
       }
-
-      // Buscar negocio como owner
+      
+      logs.push('✅ Usuario encontrado: ' + user.email)
+      logs.push('🆔 User ID: ' + user.id)
+      
+      // Paso 2: Buscar negocio como owner
+      logs.push('🔍 Buscando negocio como owner...')
       const { data: ownerBiz, error: ownerError } = await supabase
         .from('businesses')
         .select('*')
         .eq('owner_id', user.id)
         .single()
 
-      let b: any = null
-      
       if (ownerBiz && !ownerError) {
-        b = ownerBiz
-        console.log('Negocio encontrado como owner:', b)
+        logs.push('✅ Negocio encontrado como owner')
+        logs.push('🏢 Nombre: ' + ownerBiz.name)
+        setBusiness(ownerBiz)
+        setName(ownerBiz.name)
+        setCurrency(ownerBiz.currency_symbol)
+        setTax(String(ownerBiz.tax_percentage))
+        setLoyaltyRate(String(ownerBiz.loyalty_points_rate || 10))
+        
+        // Cargar empleados
+        const { data: profs } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('business_id', ownerBiz.id)
+          .order('created_at', { ascending: false })
+        setProfiles(profs || [])
+        
       } else {
-        // Buscar como empleado
+        logs.push('⚠️ No encontrado como owner')
+        logs.push('Error: ' + (ownerError?.message || 'No hay negocio con este owner_id'))
+        
+        // Paso 3: Buscar como empleado
+        logs.push('🔍 Buscando como empleado...')
         const { data: profile } = await supabase
           .from('profiles')
           .select('*, businesses(*)')
@@ -53,122 +81,87 @@ export default function SettingsPage() {
           .single()
 
         if (profile && profile.businesses) {
-          b = profile.businesses
-          console.log('Negocio encontrado como empleado:', b)
+          logs.push('✅ Negocio encontrado como empleado')
+          setBusiness(profile.businesses)
+          setName(profile.businesses.name)
+          setCurrency(profile.businesses.currency_symbol)
+          setTax(String(profile.businesses.tax_percentage))
+        } else {
+          logs.push('❌ No se encontró ningún negocio')
+          logs.push('💡 Posibles causas:')
+          logs.push('1. El owner_id en businesses no coincide con tu user_id')
+          logs.push('2. No tienes un perfil en la tabla profiles')
+          logs.push('3. Las políticas RLS están bloqueando el acceso')
         }
       }
-
-      if (b) {
-        setBusiness(b)
-        setName(b.name || '')
-        setCurrency(b.currency_symbol || '$')
-        setTax(String(b.tax_percentage || 13))
-        setLoyaltyRate(String(b.loyalty_points_rate || 10))
-        
-        // Cargar empleados si es owner
-        if (ownerBiz && !ownerError) {
-          const { data: profs } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('business_id', b.id)
-            .order('created_at', { ascending: false })
-          setProfiles(profs || [])
-        }
-      } else {
-        console.log('No se encontró negocio')
-      }
-    } catch (error) {
-      console.error('Error cargando datos:', error)
+      
+    } catch (error: any) {
+      logs.push('❌ Error inesperado: ' + error.message)
     }
+    
+    setDebugInfo(logs)
     setLoading(false)
   }
 
   const handleSave = async () => {
-    if (!business || !business.id) {
-      alert('Error: No se encontró el negocio. Recarga la página.')
+    if (!business) {
+      alert('No se encontró el negocio')
       return
     }
     
-    try {
-      const { error } = await supabase
-        .from('businesses')
-        .update({
-          name: name,
-          currency_symbol: currency,
-          tax_percentage: parseFloat(tax) || 0,
-          loyalty_points_rate: parseFloat(loyaltyRate) || 10,
-        })
-        .eq('id', business.id)
+    await supabase
+      .from('businesses')
+      .update({
+        name,
+        currency_symbol: currency,
+        tax_percentage: parseFloat(tax) || 0,
+        loyalty_points_rate: parseFloat(loyaltyRate) || 10,
+      })
+      .eq('id', business.id)
 
-      if (error) {
-        alert('Error al guardar: ' + error.message)
-      } else {
-        setSaved(true)
-        setTimeout(() => setSaved(false), 3000)
-        loadData() // Recargar datos
-      }
-    } catch (error: any) {
-      alert('Error: ' + error.message)
-    }
+    setSaved(true)
+    setTimeout(() => setSaved(false), 3000)
   }
 
   const handleAddEmployee = async () => {
     if (!empForm.email || !empForm.password || !empForm.name) {
-      alert('Por favor llena todos los campos: nombre, email y contraseña')
+      alert('Por favor llena todos los campos')
       return
     }
-    
     if (empForm.password.length < 6) {
       alert('La contraseña debe tener al menos 6 caracteres')
       return
     }
-    
-    if (!business || !business.id) {
-      alert('Error: No se encontró el negocio. Recarga la página.')
+    if (!business) {
+      alert('No se encontró el negocio')
       return
     }
 
     setAddingEmployee(true)
-    
-    try {
-      // Crear usuario en Supabase Auth
-      const { data, error } = await supabase.auth.signUp({
-        email: empForm.email,
-        password: empForm.password,
-      })
+    const { data, error } = await supabase.auth.signUp({
+      email: empForm.email,
+      password: empForm.password,
+    })
 
-      if (error) {
-        alert('Error al crear usuario: ' + error.message)
-        setAddingEmployee(false)
-        return
-      }
-
-      if (data.user) {
-        // Crear perfil del empleado
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            user_id: data.user.id,
-            business_id: business.id,
-            role: empForm.role,
-            full_name: empForm.name,
-            email: empForm.email,
-            active: true,
-          })
-
-        if (profileError) {
-          alert('Error al crear perfil: ' + profileError.message)
-        } else {
-          alert('✅ Empleado creado exitosamente')
-          setEmpForm({ email: '', name: '', password: '', role: 'seller' })
-          setShowAddEmployee(false)
-          loadData()
-        }
-      }
-    } catch (error: any) {
+    if (error) {
       alert('Error: ' + error.message)
+      setAddingEmployee(false)
+      return
     }
-    
+
+    if (data.user) {
+      await supabase.from('profiles').insert({
+        user_id: data.user.id,
+        business_id: business.id,
+        role: empForm.role,
+        full_name: empForm.name,
+        email: empForm.email,
+        active: true,
+      })
+      setEmpForm({ email: '', name: '', password: '', role: 'seller' })
+      setShowAddEmployee(false)
+      loadData()
+    }
     setAddingEmployee(false)
   }
 
@@ -178,7 +171,7 @@ export default function SettingsPage() {
   }
 
   const handleDeleteEmployee = async (id: string) => {
-    if (!confirm('¿Eliminar este empleado?')) return
+    if (!confirm('¿Eliminar?')) return
     await supabase.from('profiles').delete().eq('id', id)
     loadData()
   }
@@ -191,266 +184,104 @@ export default function SettingsPage() {
     )
   }
 
-  if (!business) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <p className="text-4xl mb-4">⚠️</p>
-          <p className="text-gray-600">No se encontró el negocio</p>
-          <button onClick={loadData} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-xl">Reintentar</button>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">⚙️ Configuración</h1>
       
-      {/* Tabs */}
-      <div className="flex gap-2 mb-6 flex-wrap">
-        <button onClick={() => setTab('general')} className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${tab === 'general' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50'}`}>🏢 General</button>
-        <button onClick={() => setTab('employees')} className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${tab === 'employees' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50'}`}>👥 Empleados</button>
-        <button onClick={() => setTab('branches')} className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${tab === 'branches' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50'}`}>📍 Sucursales</button>
-        <button onClick={() => setTab('loyalty')} className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${tab === 'loyalty' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50'}`}>⭐ Lealtad</button>
-      </div>
-
-      {/* Tab General */}
-      {tab === 'general' && (
-        <div className="bg-white rounded-2xl shadow-sm border p-6 space-y-6">
-          <div>
-            <label className="text-sm font-medium block mb-2">Nombre del Negocio</label>
-            <input 
-              value={name} 
-              onChange={(e) => setName(e.target.value)} 
-              className="w-full px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" 
-              placeholder="Mi Negocio"
-            />
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-2">Moneda</label>
-            <div className="flex gap-2 flex-wrap">
-              {['$', '€', 'RD$', 'Q', 'L', 'S/', 'Bs', '₡', '£', '¥'].map((s) => (
-                <button 
-                  key={s} 
-                  onClick={() => setCurrency(s)} 
-                  className={`px-4 py-2 rounded-xl border-2 font-semibold transition ${currency === s ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-300 hover:border-blue-400'}`}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-2">IVA (%)</label>
-            <div className="flex items-center gap-2">
-              <input 
-                type="number" 
-                step="0.01" 
-                value={tax} 
-                onChange={(e) => setTax(e.target.value)} 
-                className="w-32 px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="13"
-              />
-              <span className="font-semibold">%</span>
-            </div>
-          </div>
-          <button 
-            onClick={handleSave} 
-            className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition"
-          >
-            {saved ? '✓ Guardado' : '💾 Guardar'}
-          </button>
+      {/* Debug Info */}
+      {debugInfo.length > 0 && (
+        <div className="bg-gray-900 text-green-400 rounded-xl p-4 mb-6 font-mono text-sm">
+          <p className="text-yellow-400 font-bold mb-2">🔍 Información de Debug:</p>
+          {debugInfo.map((log, i) => (
+            <p key={i}>{log}</p>
+          ))}
         </div>
       )}
 
-      {/* Tab Empleados */}
-      {tab === 'employees' && (
-        <div>
-          <div className="bg-white rounded-2xl shadow-sm border p-6 mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold">👥 Gestión de Empleados</h2>
-              <button 
-                onClick={() => setShowAddEmployee(true)} 
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-semibold text-sm transition"
-              >
-                + Agregar Empleado
+      {business && (
+        <>
+          <div className="flex gap-2 mb-6 flex-wrap">
+            <button onClick={() => setTab('general')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'general' ? 'bg-blue-600 text-white' : 'bg-white border'}`}>🏢 General</button>
+            <button onClick={() => setTab('employees')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'employees' ? 'bg-blue-600 text-white' : 'bg-white border'}`}>👥 Empleados</button>
+          </div>
+
+          {tab === 'general' && (
+            <div className="bg-white rounded-2xl shadow-sm border p-6 space-y-6">
+              <div>
+                <label className="text-sm font-medium block mb-2">Nombre del Negocio</label>
+                <input value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-3 rounded-xl border outline-none" />
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-2">Moneda</label>
+                <div className="flex gap-2 flex-wrap">
+                  {['$', '€', 'RD$', 'Q', 'L', 'S/', 'Bs', '₡'].map((s) => (
+                    <button key={s} onClick={() => setCurrency(s)} className={`px-4 py-2 rounded-xl border-2 font-semibold ${currency === s ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-300'}`}>{s}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-2">IVA (%)</label>
+                <input type="number" step="0.01" value={tax} onChange={(e) => setTax(e.target.value)} className="w-32 px-4 py-3 rounded-xl border outline-none" />
+              </div>
+              <button onClick={handleSave} className="px-8 py-3 bg-blue-600 text-white font-bold rounded-xl">
+                {saved ? '✓ Guardado' : '💾 Guardar'}
               </button>
             </div>
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
-              <h3 className="font-semibold text-blue-800 mb-2">📋 Permisos por Rol</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
-                  <strong className="text-yellow-800">👑 Propietario</strong>
-                  <p className="text-yellow-700 text-xs mt-1">Acceso total: Todo</p>
+          )}
+
+          {tab === 'employees' && (
+            <div>
+              <div className="bg-white rounded-2xl shadow-sm border p-6 mb-6">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-lg font-semibold">👥 Empleados</h2>
+                  <button onClick={() => setShowAddEmployee(true)} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-semibold text-sm">+ Agregar</button>
                 </div>
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
-                  <strong className="text-blue-800">🏢 Gerente</strong>
-                  <p className="text-blue-700 text-xs mt-1">Todo excepto configuración</p>
-                </div>
-                <div className="bg-green-50 border border-green-200 rounded-xl p-3">
-                  <strong className="text-green-800">🛒 Vendedor</strong>
-                  <p className="text-green-700 text-xs mt-1">Solo Punto de Venta</p>
-                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+                {profiles.filter(p => p.role !== 'owner').map((emp: any) => (
+                  <div key={emp.id} className="p-4 border-b flex items-center gap-4">
+                    <div className="flex-1">
+                      <p className="font-medium">{emp.full_name}</p>
+                      <p className="text-sm text-gray-500">{emp.email}</p>
+                    </div>
+                    <span className={`px-3 py-1 rounded-full text-sm font-semibold ${emp.role === 'manager' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                      {emp.role === 'manager' ? 'Gerente' : 'Vendedor'}
+                    </span>
+                    <button onClick={() => handleToggleActive(emp.id, !emp.active)} className={`px-3 py-1.5 rounded-lg text-sm ${emp.active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                      {emp.active ? 'Activo' : 'Inactivo'}
+                    </button>
+                    <button onClick={() => handleDeleteEmployee(emp.id)} className="text-red-600">🗑️</button>
+                  </div>
+                ))}
               </div>
             </div>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-            <div className="p-4 border-b bg-yellow-50 flex items-center gap-4">
-              <div className="w-10 h-10 bg-yellow-200 rounded-full flex items-center justify-center">👑</div>
-              <div className="flex-1">
-                <p className="font-semibold">Tú (Propietario)</p>
-                <p className="text-sm text-gray-500">Cuenta principal</p>
-              </div>
-              <span className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-semibold">Propietario</span>
-            </div>
-            {profiles.filter((p: any) => p.role !== 'owner').map((emp: any) => (
-              <div key={emp.id} className="p-4 border-b flex items-center gap-4 hover:bg-gray-50">
-                <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center text-sm font-medium">
-                  {(emp.full_name || emp.email || '?').charAt(0).toUpperCase()}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium">
-                    {emp.full_name || 'Sin nombre'}
-                    {!emp.active && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full ml-2">Inactivo</span>}
-                  </p>
-                  <p className="text-sm text-gray-500 truncate">{emp.email}</p>
-                </div>
-                <span className={`px-3 py-1 rounded-full text-sm font-semibold ${emp.role === 'manager' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
-                  {emp.role === 'manager' ? 'Gerente' : 'Vendedor'}
-                </span>
-                <button 
-                  onClick={() => handleToggleActive(emp.id, !emp.active)} 
-                  className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${emp.active ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}
-                >
-                  {emp.active ? 'Activo' : 'Inactivo'}
-                </button>
-                <button 
-                  onClick={() => handleDeleteEmployee(emp.id)} 
-                  className="text-red-600 hover:text-red-800 text-sm"
-                >
-                  🗑️
-                </button>
-              </div>
-            ))}
-            {profiles.filter((p: any) => p.role !== 'owner').length === 0 && (
-              <div className="p-8 text-center text-gray-400">
-                <p className="text-4xl mb-3">👥</p>
-                <p>No hay empleados aún</p>
-              </div>
-            )}
-          </div>
-        </div>
+          )}
+        </>
       )}
 
-      {/* Tab Sucursales */}
-      {tab === 'branches' && (
-        <div className="bg-white rounded-2xl shadow-sm border p-6">
-          <h2 className="text-lg font-semibold mb-4">📍 Sucursales</h2>
-          <div className="flex items-center gap-3 p-3 border rounded-xl bg-green-50">
-            <span className="text-lg">📍</span>
-            <div className="flex-1"><p className="font-medium">Sucursal Principal</p></div>
-            <span className="px-2 py-1 rounded text-xs font-semibold bg-green-100 text-green-700">Activa</span>
-          </div>
-        </div>
-      )}
-
-      {/* Tab Lealtad */}
-      {tab === 'loyalty' && (
-        <div className="bg-white rounded-2xl shadow-sm border p-6 space-y-4">
-          <h2 className="text-lg font-semibold mb-2">⭐ Programa de Lealtad</h2>
-          <div>
-            <label className="text-sm font-medium block mb-2">Puntos por cada</label>
-            <div className="flex items-center gap-2">
-              <input 
-                type="number" 
-                value={loyaltyRate} 
-                onChange={(e) => setLoyaltyRate(e.target.value)} 
-                className="w-32 px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="10"
-              />
-              <span className="text-gray-500">de compra = 1 punto</span>
-            </div>
-          </div>
-          <button 
-            onClick={handleSave} 
-            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition"
-          >
-            💾 Guardar
-          </button>
-        </div>
-      )}
-
-      {/* Modal Agregar Empleado */}
       {showAddEmployee && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-6">
             <h2 className="text-xl font-bold mb-4">👤 Nuevo Empleado</h2>
             <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium block mb-2">Nombre completo *</label>
-                <input 
-                  value={empForm.name} 
-                  onChange={(e) => setEmpForm({ ...empForm, name: e.target.value })} 
-                  className="w-full px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" 
-                  placeholder="Juan Pérez"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium block mb-2">Email *</label>
-                <input 
-                  type="email" 
-                  value={empForm.email} 
-                  onChange={(e) => setEmpForm({ ...empForm, email: e.target.value })} 
-                  className="w-full px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" 
-                  placeholder="empleado@email.com"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium block mb-2">Contraseña *</label>
-                <input 
-                  type="password" 
-                  value={empForm.password} 
-                  onChange={(e) => setEmpForm({ ...empForm, password: e.target.value })} 
-                  className="w-full px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" 
-                  placeholder="Mínimo 6 caracteres"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium block mb-2">Rol</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button 
-                    onClick={() => setEmpForm({ ...empForm, role: 'manager' })} 
-                    className={`p-3 rounded-xl border-2 text-left transition ${empForm.role === 'manager' ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}
-                  >
-                    <p className="font-semibold text-sm">🏢 Gerente</p>
-                    <p className="text-xs text-gray-500 mt-1">Todo excepto config</p>
-                  </button>
-                  <button 
-                    onClick={() => setEmpForm({ ...empForm, role: 'seller' })} 
-                    className={`p-3 rounded-xl border-2 text-left transition ${empForm.role === 'seller' ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}
-                  >
-                    <p className="font-semibold text-sm">🛒 Vendedor</p>
-                    <p className="text-xs text-gray-500 mt-1">Solo POS</p>
-                  </button>
-                </div>
+              <input value={empForm.name} onChange={(e) => setEmpForm({ ...empForm, name: e.target.value })} className="w-full px-4 py-3 rounded-xl border outline-none" placeholder="Nombre completo" />
+              <input type="email" value={empForm.email} onChange={(e) => setEmpForm({ ...empForm, email: e.target.value })} className="w-full px-4 py-3 rounded-xl border outline-none" placeholder="Email" />
+              <input type="password" value={empForm.password} onChange={(e) => setEmpForm({ ...empForm, password: e.target.value })} className="w-full px-4 py-3 rounded-xl border outline-none" placeholder="Contraseña (mín. 6 caracteres)" />
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => setEmpForm({ ...empForm, role: 'manager' })} className={`p-3 rounded-xl border-2 ${empForm.role === 'manager' ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}>
+                  <p className="font-semibold text-sm">🏢 Gerente</p>
+                </button>
+                <button onClick={() => setEmpForm({ ...empForm, role: 'seller' })} className={`p-3 rounded-xl border-2 ${empForm.role === 'seller' ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}>
+                  <p className="font-semibold text-sm">🛒 Vendedor</p>
+                </button>
               </div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button 
-                onClick={handleAddEmployee} 
-                disabled={addingEmployee} 
-                className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition disabled:opacity-50"
-              >
-                {addingEmployee ? 'Creando...' : '✅ Crear Empleado'}
+              <button onClick={handleAddEmployee} disabled={addingEmployee} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl disabled:opacity-50">
+                {addingEmployee ? 'Creando...' : '✅ Crear'}
               </button>
-              <button 
-                onClick={() => { setShowAddEmployee(false); setEmpForm({ email: '', name: '', password: '', role: 'seller' }) }} 
-                className="px-6 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl font-semibold transition"
-              >
-                Cancelar
-              </button>
+              <button onClick={() => setShowAddEmployee(false)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Cancelar</button>
             </div>
           </div>
         </div>
