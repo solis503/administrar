@@ -17,72 +17,158 @@ export default function SettingsPage() {
   const [addingEmployee, setAddingEmployee] = useState(false)
   const supabase = createClient()
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => { 
+    loadData()
+  }, [])
 
   const loadData = async () => {
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    let b: any = null
-    const { data: ob } = await supabase.from('businesses').select('*').eq('owner_id', user.id).single()
-    if (ob) b = ob
-    else { const { data: pr } = await supabase.from('profiles').select('*, businesses(*)').eq('user_id', user.id).single(); if (pr) b = pr.businesses }
-    if (b) {
-      setBusiness(b)
-      setName(b.name)
-      setCurrency(b.currency_symbol)
-      setTax(String(b.tax_percentage))
-      setLoyaltyRate(String(b.loyalty_points_rate || 10))
-      const { data: profs } = await supabase.from('profiles').select('*').eq('business_id', b.id).order('created_at', { ascending: false })
-      setProfiles(profs || [])
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        console.log('No hay usuario')
+        setLoading(false)
+        return
+      }
+
+      // Buscar negocio como owner
+      const { data: ownerBiz, error: ownerError } = await supabase
+        .from('businesses')
+        .select('*')
+        .eq('owner_id', user.id)
+        .single()
+
+      let b: any = null
+      
+      if (ownerBiz && !ownerError) {
+        b = ownerBiz
+        console.log('Negocio encontrado como owner:', b)
+      } else {
+        // Buscar como empleado
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*, businesses(*)')
+          .eq('user_id', user.id)
+          .eq('active', true)
+          .single()
+
+        if (profile && profile.businesses) {
+          b = profile.businesses
+          console.log('Negocio encontrado como empleado:', b)
+        }
+      }
+
+      if (b) {
+        setBusiness(b)
+        setName(b.name || '')
+        setCurrency(b.currency_symbol || '$')
+        setTax(String(b.tax_percentage || 13))
+        setLoyaltyRate(String(b.loyalty_points_rate || 10))
+        
+        // Cargar empleados si es owner
+        if (ownerBiz && !ownerError) {
+          const { data: profs } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('business_id', b.id)
+            .order('created_at', { ascending: false })
+          setProfiles(profs || [])
+        }
+      } else {
+        console.log('No se encontró negocio')
+      }
+    } catch (error) {
+      console.error('Error cargando datos:', error)
     }
     setLoading(false)
   }
 
   const handleSave = async () => {
-    if (!business) return
-    await supabase.from('businesses').update({
-      name,
-      currency_symbol: currency,
-      tax_percentage: parseFloat(tax) || 0,
-      loyalty_points_rate: parseFloat(loyaltyRate) || 10,
-    }).eq('id', business.id)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 3000)
+    if (!business || !business.id) {
+      alert('Error: No se encontró el negocio. Recarga la página.')
+      return
+    }
+    
+    try {
+      const { error } = await supabase
+        .from('businesses')
+        .update({
+          name: name,
+          currency_symbol: currency,
+          tax_percentage: parseFloat(tax) || 0,
+          loyalty_points_rate: parseFloat(loyaltyRate) || 10,
+        })
+        .eq('id', business.id)
+
+      if (error) {
+        alert('Error al guardar: ' + error.message)
+      } else {
+        setSaved(true)
+        setTimeout(() => setSaved(false), 3000)
+        loadData() // Recargar datos
+      }
+    } catch (error: any) {
+      alert('Error: ' + error.message)
+    }
   }
 
   const handleAddEmployee = async () => {
-    if (!empForm.email || !empForm.password || !business) {
-      alert('Por favor llena todos los campos')
+    if (!empForm.email || !empForm.password || !empForm.name) {
+      alert('Por favor llena todos los campos: nombre, email y contraseña')
       return
     }
+    
     if (empForm.password.length < 6) {
       alert('La contraseña debe tener al menos 6 caracteres')
       return
     }
-    setAddingEmployee(true)
-    const { data, error } = await supabase.auth.signUp({
-      email: empForm.email,
-      password: empForm.password,
-    })
-    if (error) {
-      alert('Error al crear usuario: ' + error.message)
-      setAddingEmployee(false)
+    
+    if (!business || !business.id) {
+      alert('Error: No se encontró el negocio. Recarga la página.')
       return
     }
-    if (data.user) {
-      await supabase.from('profiles').insert({
-        user_id: data.user.id,
-        business_id: business.id,
-        role: empForm.role,
-        full_name: empForm.name,
+
+    setAddingEmployee(true)
+    
+    try {
+      // Crear usuario en Supabase Auth
+      const { data, error } = await supabase.auth.signUp({
         email: empForm.email,
-        active: true,
+        password: empForm.password,
       })
-      setEmpForm({ email: '', name: '', password: '', role: 'seller' })
-      setShowAddEmployee(false)
-      loadData()
+
+      if (error) {
+        alert('Error al crear usuario: ' + error.message)
+        setAddingEmployee(false)
+        return
+      }
+
+      if (data.user) {
+        // Crear perfil del empleado
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert({
+            user_id: data.user.id,
+            business_id: business.id,
+            role: empForm.role,
+            full_name: empForm.name,
+            email: empForm.email,
+            active: true,
+          })
+
+        if (profileError) {
+          alert('Error al crear perfil: ' + profileError.message)
+        } else {
+          alert('✅ Empleado creado exitosamente')
+          setEmpForm({ email: '', name: '', password: '', role: 'seller' })
+          setShowAddEmployee(false)
+          loadData()
+        }
+      }
+    } catch (error: any) {
+      alert('Error: ' + error.message)
     }
+    
     setAddingEmployee(false)
   }
 
@@ -97,7 +183,25 @@ export default function SettingsPage() {
     loadData()
   }
 
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin text-4xl">⏳</div>
+      </div>
+    )
+  }
+
+  if (!business) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <p className="text-4xl mb-4">⚠️</p>
+          <p className="text-gray-600">No se encontró el negocio</p>
+          <button onClick={loadData} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-xl">Reintentar</button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -105,10 +209,10 @@ export default function SettingsPage() {
       
       {/* Tabs */}
       <div className="flex gap-2 mb-6 flex-wrap">
-        <button onClick={() => setTab('general')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'general' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50'}`}>🏢 General</button>
-        <button onClick={() => setTab('employees')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'employees' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50'}`}>👥 Empleados</button>
-        <button onClick={() => setTab('branches')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'branches' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50'}`}>📍 Sucursales</button>
-        <button onClick={() => setTab('loyalty')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'loyalty' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50'}`}>⭐ Lealtad</button>
+        <button onClick={() => setTab('general')} className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${tab === 'general' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50'}`}>🏢 General</button>
+        <button onClick={() => setTab('employees')} className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${tab === 'employees' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50'}`}>👥 Empleados</button>
+        <button onClick={() => setTab('branches')} className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${tab === 'branches' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50'}`}>📍 Sucursales</button>
+        <button onClick={() => setTab('loyalty')} className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${tab === 'loyalty' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50'}`}>⭐ Lealtad</button>
       </div>
 
       {/* Tab General */}
@@ -116,24 +220,47 @@ export default function SettingsPage() {
         <div className="bg-white rounded-2xl shadow-sm border p-6 space-y-6">
           <div>
             <label className="text-sm font-medium block mb-2">Nombre del Negocio</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" />
+            <input 
+              value={name} 
+              onChange={(e) => setName(e.target.value)} 
+              className="w-full px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" 
+              placeholder="Mi Negocio"
+            />
           </div>
           <div>
             <label className="text-sm font-medium block mb-2">Moneda</label>
             <div className="flex gap-2 flex-wrap">
               {['$', '€', 'RD$', 'Q', 'L', 'S/', 'Bs', '₡', '£', '¥'].map((s) => (
-                <button key={s} onClick={() => setCurrency(s)} className={`px-4 py-2 rounded-xl border-2 font-semibold ${currency === s ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-300 hover:border-blue-400'}`}>{s}</button>
+                <button 
+                  key={s} 
+                  onClick={() => setCurrency(s)} 
+                  className={`px-4 py-2 rounded-xl border-2 font-semibold transition ${currency === s ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-300 hover:border-blue-400'}`}
+                >
+                  {s}
+                </button>
               ))}
             </div>
           </div>
           <div>
             <label className="text-sm font-medium block mb-2">IVA (%)</label>
             <div className="flex items-center gap-2">
-              <input type="number" step="0.01" value={tax} onChange={(e) => setTax(e.target.value)} className="w-32 px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" />
+              <input 
+                type="number" 
+                step="0.01" 
+                value={tax} 
+                onChange={(e) => setTax(e.target.value)} 
+                className="w-32 px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="13"
+              />
               <span className="font-semibold">%</span>
             </div>
           </div>
-          <button onClick={handleSave} className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition">{saved ? '✓ Guardado' : '💾 Guardar'}</button>
+          <button 
+            onClick={handleSave} 
+            className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition"
+          >
+            {saved ? '✓ Guardado' : '💾 Guardar'}
+          </button>
         </div>
       )}
 
@@ -143,7 +270,12 @@ export default function SettingsPage() {
           <div className="bg-white rounded-2xl shadow-sm border p-6 mb-6">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-semibold">👥 Gestión de Empleados</h2>
-              <button onClick={() => setShowAddEmployee(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-semibold text-sm transition">+ Agregar Empleado</button>
+              <button 
+                onClick={() => setShowAddEmployee(true)} 
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-semibold text-sm transition"
+              >
+                + Agregar Empleado
+              </button>
             </div>
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
               <h3 className="font-semibold text-blue-800 mb-2">📋 Permisos por Rol</h3>
@@ -188,10 +320,18 @@ export default function SettingsPage() {
                 <span className={`px-3 py-1 rounded-full text-sm font-semibold ${emp.role === 'manager' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
                   {emp.role === 'manager' ? 'Gerente' : 'Vendedor'}
                 </span>
-                <button onClick={() => handleToggleActive(emp.id, !emp.active)} className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${emp.active ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}>
+                <button 
+                  onClick={() => handleToggleActive(emp.id, !emp.active)} 
+                  className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${emp.active ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}
+                >
                   {emp.active ? 'Activo' : 'Inactivo'}
                 </button>
-                <button onClick={() => handleDeleteEmployee(emp.id)} className="text-red-600 hover:text-red-800 text-sm">🗑️</button>
+                <button 
+                  onClick={() => handleDeleteEmployee(emp.id)} 
+                  className="text-red-600 hover:text-red-800 text-sm"
+                >
+                  🗑️
+                </button>
               </div>
             ))}
             {profiles.filter((p: any) => p.role !== 'owner').length === 0 && (
@@ -223,11 +363,22 @@ export default function SettingsPage() {
           <div>
             <label className="text-sm font-medium block mb-2">Puntos por cada</label>
             <div className="flex items-center gap-2">
-              <input type="number" value={loyaltyRate} onChange={(e) => setLoyaltyRate(e.target.value)} className="w-32 px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" />
+              <input 
+                type="number" 
+                value={loyaltyRate} 
+                onChange={(e) => setLoyaltyRate(e.target.value)} 
+                className="w-32 px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="10"
+              />
               <span className="text-gray-500">de compra = 1 punto</span>
             </div>
           </div>
-          <button onClick={handleSave} className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition">💾 Guardar</button>
+          <button 
+            onClick={handleSave} 
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition"
+          >
+            💾 Guardar
+          </button>
         </div>
       )}
 
@@ -238,25 +389,48 @@ export default function SettingsPage() {
             <h2 className="text-xl font-bold mb-4">👤 Nuevo Empleado</h2>
             <div className="space-y-4">
               <div>
-                <label className="text-sm font-medium block mb-2">Nombre completo</label>
-                <input value={empForm.name} onChange={(e) => setEmpForm({ ...empForm, name: e.target.value })} className="w-full px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" placeholder="Juan Pérez" />
+                <label className="text-sm font-medium block mb-2">Nombre completo *</label>
+                <input 
+                  value={empForm.name} 
+                  onChange={(e) => setEmpForm({ ...empForm, name: e.target.value })} 
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" 
+                  placeholder="Juan Pérez"
+                />
               </div>
               <div>
                 <label className="text-sm font-medium block mb-2">Email *</label>
-                <input type="email" value={empForm.email} onChange={(e) => setEmpForm({ ...empForm, email: e.target.value })} className="w-full px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" placeholder="empleado@email.com" />
+                <input 
+                  type="email" 
+                  value={empForm.email} 
+                  onChange={(e) => setEmpForm({ ...empForm, email: e.target.value })} 
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" 
+                  placeholder="empleado@email.com"
+                />
               </div>
               <div>
                 <label className="text-sm font-medium block mb-2">Contraseña *</label>
-                <input type="password" value={empForm.password} onChange={(e) => setEmpForm({ ...empForm, password: e.target.value })} className="w-full px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" placeholder="Mínimo 6 caracteres" />
+                <input 
+                  type="password" 
+                  value={empForm.password} 
+                  onChange={(e) => setEmpForm({ ...empForm, password: e.target.value })} 
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500" 
+                  placeholder="Mínimo 6 caracteres"
+                />
               </div>
               <div>
                 <label className="text-sm font-medium block mb-2">Rol</label>
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => setEmpForm({ ...empForm, role: 'manager' })} className={`p-3 rounded-xl border-2 text-left ${empForm.role === 'manager' ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}>
+                  <button 
+                    onClick={() => setEmpForm({ ...empForm, role: 'manager' })} 
+                    className={`p-3 rounded-xl border-2 text-left transition ${empForm.role === 'manager' ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}
+                  >
                     <p className="font-semibold text-sm">🏢 Gerente</p>
                     <p className="text-xs text-gray-500 mt-1">Todo excepto config</p>
                   </button>
-                  <button onClick={() => setEmpForm({ ...empForm, role: 'seller' })} className={`p-3 rounded-xl border-2 text-left ${empForm.role === 'seller' ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}>
+                  <button 
+                    onClick={() => setEmpForm({ ...empForm, role: 'seller' })} 
+                    className={`p-3 rounded-xl border-2 text-left transition ${empForm.role === 'seller' ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}
+                  >
                     <p className="font-semibold text-sm">🛒 Vendedor</p>
                     <p className="text-xs text-gray-500 mt-1">Solo POS</p>
                   </button>
@@ -264,10 +438,17 @@ export default function SettingsPage() {
               </div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button onClick={handleAddEmployee} disabled={addingEmployee} className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition disabled:opacity-50">
+              <button 
+                onClick={handleAddEmployee} 
+                disabled={addingEmployee} 
+                className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition disabled:opacity-50"
+              >
                 {addingEmployee ? 'Creando...' : '✅ Crear Empleado'}
               </button>
-              <button onClick={() => { setShowAddEmployee(false); setEmpForm({ email: '', name: '', password: '', role: 'seller' }) }} className="px-6 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl font-semibold transition">
+              <button 
+                onClick={() => { setShowAddEmployee(false); setEmpForm({ email: '', name: '', password: '', role: 'seller' }) }} 
+                className="px-6 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl font-semibold transition"
+              >
                 Cancelar
               </button>
             </div>
