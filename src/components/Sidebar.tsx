@@ -2,54 +2,66 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 
 export default function Sidebar({ userName, businessName, userRole }: { userName: string; businessName: string; userRole: string }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [permissions, setPermissions] = useState<any>(null)
-
-  useEffect(() => { loadPermissions() }, [])
-
-  const loadPermissions = async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    let biz: any = null
-    const { data: ob } = await supabase.from('businesses').select('*').eq('owner_id', user.id).single()
-    if (ob) biz = ob
-    else { const { data: pr } = await supabase.from('profiles').select('*, businesses(*)').eq('user_id', user.id).single(); if (pr) biz = pr.businesses }
-    if (!biz) return
-    if (userRole === 'owner') {
-      setPermissions({ dashboard: true, pos: true, products: true, inventory: true, reports: true, suppliers: true, clients: true, expenses: true, settings: true })
-    } else if (userRole === 'manager') {
-      setPermissions({ dashboard: true, pos: true, products: true, inventory: true, reports: true, suppliers: true, clients: true, expenses: true, settings: false })
-    } else {
-      setPermissions({ dashboard: false, pos: true, products: false, inventory: false, reports: false, suppliers: false, clients: true, expenses: false, settings: false })
-    }
-  }
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
   }
 
-  if (!permissions) return null
+  // Definir opciones según el rol
+  const getNavItems = () => {
+    const items = []
+    
+    if (userRole === 'owner') {
+      // Propietario: ve TODO
+      items.push(
+        { href: '/dashboard', label: 'Dashboard', icon: '📊' },
+        { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
+        { href: '/products', label: 'Productos', icon: '📦' },
+        { href: '/inventory', label: 'Inventario', icon: '🏷️' },
+        { href: '/reports', label: 'Reportes', icon: '📈' },
+        { href: '/suppliers', label: 'Proveedores', icon: '🚚' },
+        { href: '/clients', label: 'Clientes', icon: '👥' },
+        { href: '/expenses', label: 'Gastos', icon: '💸' },
+        { href: '/settings', label: 'Configuración', icon: '⚙️' }
+      )
+    } else if (userRole === 'manager') {
+      // Gerente: ve casi todo excepto configuración
+      items.push(
+        { href: '/dashboard', label: 'Dashboard', icon: '📊' },
+        { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
+        { href: '/products', label: 'Productos', icon: '📦' },
+        { href: '/inventory', label: 'Inventario', icon: '🏷️' },
+        { href: '/reports', label: 'Reportes', icon: '📈' },
+        { href: '/suppliers', label: 'Proveedores', icon: '🚚' },
+        { href: '/clients', label: 'Clientes', icon: '👥' },
+        { href: '/expenses', label: 'Gastos', icon: '💸' }
+      )
+    } else {
+      // Vendedor: solo POS y Clientes
+      items.push(
+        { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
+        { href: '/clients', label: 'Clientes', icon: '👥' }
+      )
+    }
+    
+    return items
+  }
 
-  const navItems = [
-    permissions.dashboard && { href: '/dashboard', label: 'Dashboard', icon: '📊' },
-    permissions.pos && { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
-    permissions.products && { href: '/products', label: 'Productos', icon: '📦' },
-    permissions.inventory && { href: '/inventory', label: 'Inventario', icon: '🏷️' },
-    permissions.reports && { href: '/reports', label: 'Reportes', icon: '📈' },
-    permissions.suppliers && { href: '/suppliers', label: 'Proveedores', icon: '🚚' },
-    permissions.clients && { href: '/clients', label: 'Clientes', icon: '👥' },
-    permissions.expenses && { href: '/expenses', label: 'Gastos', icon: '💸' },
-    permissions.settings && { href: '/settings', label: 'Configuración', icon: '⚙️' },
-  ].filter(Boolean) as { href: string; label: string; icon: string }[]
+  const navItems = getNavItems()
 
-  const roleBadge: any = { owner: { l: 'Propietario', c: 'bg-yellow-100 text-yellow-700' }, manager: { l: 'Gerente', c: 'bg-blue-100 text-blue-700' }, seller: { l: 'Vendedor', c: 'bg-green-100 text-green-700' } }[userRole] || { l: 'Sin rol', c: 'bg-gray-100 text-gray-700' }
+  const roleBadge: any = { 
+    owner: { l: 'Propietario', c: 'bg-yellow-100 text-yellow-700' }, 
+    manager: { l: 'Gerente', c: 'bg-blue-100 text-blue-700' }, 
+    seller: { l: 'Vendedor', c: 'bg-green-100 text-green-700' } 
+  }[userRole] || { l: 'Sin rol', c: 'bg-gray-100 text-gray-700' }
 
   return (
     <>
