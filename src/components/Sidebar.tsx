@@ -22,9 +22,10 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
 
   const loadPermissions = async () => {
     setDebug([])
+    addDebug('Iniciando carga de permisos...')
     
     if (userRole === 'owner') {
-      addDebug('Rol: owner - Todos los permisos')
+      addDebug('✅ Rol: owner - Todos los permisos')
       setPermissions({
         dashboard: true, pos: true, products: true, inventory: true,
         reports: true, suppliers: true, clients: true, expenses: true, settings: true
@@ -32,34 +33,63 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
       return
     }
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      addDebug('Error: No hay usuario')
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    
+    if (authError || !user) {
+      addDebug('❌ Error: No hay usuario')
       return
     }
-    addDebug(`Usuario: ${user.email}`)
+    
+    addDebug(`Usuario: ${user.email} (${user.id})`)
 
-    const { data: profile, error } = await supabase
+    // Cargar TODOS los perfiles (no solo uno)
+    const { data: profiles, error } = await supabase
       .from('profiles')
-      .select('permissions, role')
+      .select('*')
       .eq('user_id', user.id)
       .eq('active', true)
-      .single()
 
     if (error) {
       addDebug(`Error SQL: ${error.message}`)
+      return
     }
 
-    if (profile && profile.permissions) {
-      addDebug('✅ Permisos cargados de BD')
-      addDebug(`Permisos: ${JSON.stringify(profile.permissions)}`)
+    if (!profiles || profiles.length === 0) {
+      addDebug('No hay perfiles activos')
+      addDebug('Usando permisos por defecto')
       setPermissions({
-        ...profile.permissions,
-        settings: profile.role === 'owner'
+        dashboard: false, pos: true, products: false, inventory: false,
+        reports: false, suppliers: false, clients: false, expenses: false, settings: false
+      })
+      return
+    }
+
+    addDebug(`Encontrados ${profiles.length} perfil(es)`)
+
+    // Usar el primer perfil con permisos
+    let selectedProfile = null
+    for (const profile of profiles) {
+      addDebug(`Perfil: ${profile.full_name || 'Sin nombre'} - ${profile.role}`)
+      
+      if (profile.permissions && Object.keys(profile.permissions).length > 0) {
+        addDebug('✅ Permisos encontrados:')
+        addDebug(JSON.stringify(profile.permissions))
+        selectedProfile = profile
+        break
+      }
+    }
+
+    if (selectedProfile && selectedProfile.permissions) {
+      addDebug('✅ Aplicando permisos personalizados')
+      setPermissions({
+        ...selectedProfile.permissions,
+        settings: selectedProfile.role === 'owner'
       })
     } else {
       addDebug('⚠️ Sin permisos personalizados')
-      if (profile?.role === 'manager') {
+      addDebug('Usando permisos por defecto según rol')
+      
+      if (userRole === 'manager') {
         setPermissions({
           dashboard: true, pos: true, products: true, inventory: true,
           reports: true, suppliers: true, clients: true, expenses: true, settings: false
@@ -67,7 +97,7 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
       } else {
         setPermissions({
           dashboard: false, pos: true, products: false, inventory: false,
-          reports: false, suppliers: false, clients: true, expenses: false, settings: false
+          reports: false, suppliers: false, clients: false, expenses: false, settings: false
         })
       }
     }
@@ -83,7 +113,12 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
       <aside className="fixed md:static inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin text-4xl mb-2">⏳</div>
-          <p className="text-sm text-gray-500">Cargando permisos...</p>
+          <p className="text-sm text-gray-500">Cargando...</p>
+          {debug.length > 0 && (
+            <div className="mt-4 bg-gray-900 text-green-400 rounded-lg p-2 font-mono text-xs text-left max-w-xs">
+              {debug.map((d, i) => <div key={i}>{d}</div>)}
+            </div>
+          )}
         </div>
       </aside>
     )
@@ -144,7 +179,7 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
         </nav>
         <div className="p-3 border-t border-gray-100">
           <button onClick={loadPermissions} className="w-full mb-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs text-gray-600 font-semibold">
-            🔄 Refrescar Permisos
+            🔄 Refrescar
           </button>
           <div className="flex items-center gap-2 px-2 py-1 mb-1">
             <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center"><span className="text-xs font-medium">{userName.charAt(0).toUpperCase()}</span></div>
