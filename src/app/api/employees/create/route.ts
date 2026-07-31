@@ -55,6 +55,23 @@ export async function POST(req: Request) {
       )
     }
 
+    // El trigger `handle_new_user` de la base de datos crea automáticamente un
+    // negocio + sucursal + perfil "owner" para CUALQUIER usuario nuevo (pensado
+    // para cuando un dueño se registra solo). Como este endpoint crea empleados,
+    // hay que deshacer eso antes de insertar el perfil correcto del empleado.
+    const { data: phantomProfile } = await supabaseAdmin
+      .from('profiles')
+      .select('id, business_id')
+      .eq('user_id', authData.user.id)
+      .maybeSingle()
+
+    if (phantomProfile) {
+      await supabaseAdmin.from('profiles').delete().eq('id', phantomProfile.id)
+      await supabaseAdmin.from('branches').delete().eq('business_id', phantomProfile.business_id)
+      await supabaseAdmin.from('businesses').delete().eq('id', phantomProfile.business_id)
+    }
+
+    // Crear el perfil real del empleado, en el negocio del dueño que hizo la petición
     const { error: profileError } = await supabaseAdmin.from('profiles').insert({
       user_id: authData.user.id,
       business_id: business.id,
