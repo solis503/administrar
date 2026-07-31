@@ -10,14 +10,21 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
   const supabase = createClient()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [permissions, setPermissions] = useState<any>(null)
+  const [debug, setDebug] = useState<string[]>([])
 
   useEffect(() => { 
     loadPermissions() 
   }, [])
 
+  const addDebug = (msg: string) => {
+    setDebug(prev => [...prev, `${new Date().toLocaleTimeString()}: ${msg}`])
+  }
+
   const loadPermissions = async () => {
-    // Si es owner, tiene todos los permisos
+    setDebug([])
+    
     if (userRole === 'owner') {
+      addDebug('Rol: owner - Todos los permisos')
       setPermissions({
         dashboard: true, pos: true, products: true, inventory: true,
         reports: true, suppliers: true, clients: true, expenses: true, settings: true
@@ -25,9 +32,12 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
       return
     }
 
-    // Cargar permisos personalizados de la base de datos
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    if (!user) {
+      addDebug('Error: No hay usuario')
+      return
+    }
+    addDebug(`Usuario: ${user.email}`)
 
     const { data: profile, error } = await supabase
       .from('profiles')
@@ -37,17 +47,18 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
       .single()
 
     if (error) {
-      console.error('Error cargando permisos:', error)
+      addDebug(`Error SQL: ${error.message}`)
     }
 
     if (profile && profile.permissions) {
-      // Usar los permisos personalizados de la base de datos
+      addDebug('✅ Permisos cargados de BD')
+      addDebug(`Permisos: ${JSON.stringify(profile.permissions)}`)
       setPermissions({
         ...profile.permissions,
-        settings: profile.role === 'owner' // Solo owner puede acceder a settings
+        settings: profile.role === 'owner'
       })
     } else {
-      // Fallback: permisos por defecto según el rol
+      addDebug('⚠️ Sin permisos personalizados')
       if (profile?.role === 'manager') {
         setPermissions({
           dashboard: true, pos: true, products: true, inventory: true,
@@ -67,12 +78,17 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
     router.push('/login')
   }
 
-  // Si aún no se han cargado los permisos, mostrar loader
   if (!permissions) {
-    return null
+    return (
+      <aside className="fixed md:static inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin text-4xl mb-2">⏳</div>
+          <p className="text-sm text-gray-500">Cargando permisos...</p>
+        </div>
+      </aside>
+    )
   }
 
-  // Construir menú según los permisos personalizados
   const navItems = [
     permissions.dashboard && { href: '/dashboard', label: 'Dashboard', icon: '📊' },
     permissions.pos && { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
@@ -118,8 +134,18 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
               </Link>
             )
           })}
+          
+          {debug.length > 0 && (
+            <div className="mt-4 bg-gray-900 text-green-400 rounded-lg p-2 font-mono text-xs">
+              <div className="text-yellow-400 font-bold mb-1">Debug:</div>
+              {debug.map((d, i) => <div key={i}>{d}</div>)}
+            </div>
+          )}
         </nav>
         <div className="p-3 border-t border-gray-100">
+          <button onClick={loadPermissions} className="w-full mb-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs text-gray-600 font-semibold">
+            🔄 Refrescar Permisos
+          </button>
           <div className="flex items-center gap-2 px-2 py-1 mb-1">
             <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center"><span className="text-xs font-medium">{userName.charAt(0).toUpperCase()}</span></div>
             <div className="flex-1 min-w-0">
