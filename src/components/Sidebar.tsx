@@ -2,56 +2,88 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 export default function Sidebar({ userName, businessName, userRole }: { userName: string; businessName: string; userRole: string }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [permissions, setPermissions] = useState<any>(null)
+
+  useEffect(() => { 
+    loadPermissions() 
+  }, [])
+
+  const loadPermissions = async () => {
+    // Si es owner, tiene todos los permisos
+    if (userRole === 'owner') {
+      setPermissions({
+        dashboard: true, pos: true, products: true, inventory: true,
+        reports: true, suppliers: true, clients: true, expenses: true, settings: true
+      })
+      return
+    }
+
+    // Cargar permisos personalizados de la base de datos
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('permissions, role')
+      .eq('user_id', user.id)
+      .eq('active', true)
+      .single()
+
+    if (error) {
+      console.error('Error cargando permisos:', error)
+    }
+
+    if (profile && profile.permissions) {
+      // Usar los permisos personalizados de la base de datos
+      setPermissions({
+        ...profile.permissions,
+        settings: profile.role === 'owner' // Solo owner puede acceder a settings
+      })
+    } else {
+      // Fallback: permisos por defecto según el rol
+      if (profile?.role === 'manager') {
+        setPermissions({
+          dashboard: true, pos: true, products: true, inventory: true,
+          reports: true, suppliers: true, clients: true, expenses: true, settings: false
+        })
+      } else {
+        setPermissions({
+          dashboard: false, pos: true, products: false, inventory: false,
+          reports: false, suppliers: false, clients: true, expenses: false, settings: false
+        })
+      }
+    }
+  }
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
   }
 
-  // Menú según el rol
-  const getNavItems = () => {
-    if (userRole === 'owner') {
-      return [
-        { href: '/dashboard', label: 'Dashboard', icon: '📊' },
-        { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
-        { href: '/products', label: 'Productos', icon: '📦' },
-        { href: '/inventory', label: 'Inventario', icon: '🏷️' },
-        { href: '/reports', label: 'Reportes', icon: '📈' },
-        { href: '/suppliers', label: 'Proveedores', icon: '🚚' },
-        { href: '/clients', label: 'Clientes', icon: '👥' },
-        { href: '/expenses', label: 'Gastos', icon: '💸' },
-        { href: '/settings', label: 'Configuración', icon: '⚙️' },
-      ]
-    }
-    
-    if (userRole === 'manager') {
-      return [
-        { href: '/dashboard', label: 'Dashboard', icon: '📊' },
-        { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
-        { href: '/products', label: 'Productos', icon: '📦' },
-        { href: '/inventory', label: 'Inventario', icon: '🏷️' },
-        { href: '/reports', label: 'Reportes', icon: '📈' },
-        { href: '/suppliers', label: 'Proveedores', icon: '🚚' },
-        { href: '/clients', label: 'Clientes', icon: '👥' },
-        { href: '/expenses', label: 'Gastos', icon: '💸' },
-      ]
-    }
-    
-    // Vendedor: solo POS y Clientes
-    return [
-      { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
-      { href: '/clients', label: 'Clientes', icon: '👥' },
-    ]
+  // Si aún no se han cargado los permisos, mostrar loader
+  if (!permissions) {
+    return null
   }
 
-  const navItems = getNavItems()
+  // Construir menú según los permisos personalizados
+  const navItems = [
+    permissions.dashboard && { href: '/dashboard', label: 'Dashboard', icon: '📊' },
+    permissions.pos && { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
+    permissions.products && { href: '/products', label: 'Productos', icon: '📦' },
+    permissions.inventory && { href: '/inventory', label: 'Inventario', icon: '🏷️' },
+    permissions.reports && { href: '/reports', label: 'Reportes', icon: '📈' },
+    permissions.suppliers && { href: '/suppliers', label: 'Proveedores', icon: '🚚' },
+    permissions.clients && { href: '/clients', label: 'Clientes', icon: '👥' },
+    permissions.expenses && { href: '/expenses', label: 'Gastos', icon: '💸' },
+    permissions.settings && { href: '/settings', label: 'Configuración', icon: '⚙️' },
+  ].filter(Boolean) as { href: string; label: string; icon: string }[]
 
   const roleBadge: any = { 
     owner: { l: 'Propietario', c: 'bg-yellow-100 text-yellow-700' }, 
