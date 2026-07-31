@@ -171,23 +171,29 @@ export default function SettingsPage() {
           return
         }
 
-        const { error: profileError } = await supabase.from('profiles').insert({
-          user_id: authData.user.id,
-          business_id: business.id,
-          role: empForm.role,
-          full_name: empForm.name,
-          email: empForm.email,
-          active: true,
-          permissions: empForm.permissions,
+        const res = await fetch('/api/employees/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: empForm.email,
+            password: empForm.password,
+            full_name: empForm.name,
+            role: empForm.role,
+            permissions: empForm.permissions,
+          }),
         })
+        const result = await res.json()
 
-        if (profileError) {
-          showMessage('❌ Error: ' + profileError.message, 'error')
-        } else {
-          showMessage('✅ Empleado creado', 'success')
-          await loadData()
-          setShowEmployeeModal(false)
+        if (!res.ok) {
+          showMessage('⚠️ ' + (result.error || 'No se pudo crear automáticamente. Usa el botón 🔧 Manual'), 'error')
+          setSaving(false)
+          setShowManualCreate(true)
+          return
         }
+
+        showMessage('✅ Empleado creado', 'success')
+        await loadData()
+        setShowEmployeeModal(false)
       }
     } catch (err: any) {
       showMessage('❌ Error: ' + err.message, 'error')
