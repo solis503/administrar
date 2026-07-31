@@ -159,33 +159,30 @@ export default function SettingsPage() {
           return
         }
 
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-          email: empForm.email,
-          password: empForm.password,
-        })
+        let result: any = {}
+        let res: Response
 
-        if (authError || !authData.user) {
-          showMessage('⚠️ No se pudo crear automáticamente. Usa el botón 🔧 Manual', 'error')
+        try {
+          res = await fetch('/api/employees/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: empForm.email,
+              password: empForm.password,
+              full_name: empForm.name,
+              role: empForm.role,
+              permissions: empForm.permissions,
+            }),
+          })
+          result = await res.json()
+        } catch {
+          showMessage('❌ No se pudo contactar al servidor. Intentá de nuevo.', 'error')
           setSaving(false)
-          setShowManualCreate(true)
           return
         }
 
-        const res = await fetch('/api/employees/create', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: empForm.email,
-            password: empForm.password,
-            full_name: empForm.name,
-            role: empForm.role,
-            permissions: empForm.permissions,
-          }),
-        })
-        const result = await res.json()
-
         if (!res.ok) {
-          showMessage('⚠️ ' + (result.error || 'No se pudo crear automáticamente. Usa el botón 🔧 Manual'), 'error')
+          showMessage('⚠️ ' + (result.error || 'No se pudo crear automáticamente') + '. Usa el botón 🔧 Manual', 'error')
           setSaving(false)
           setShowManualCreate(true)
           return
