@@ -31,35 +31,34 @@ export default function SettingsPage() {
 
   const showMessage = (text: string, type: string) => {
     setMessage({ text, type })
-    addLog(`Mensaje: ${text}`)
     setTimeout(() => setMessage({ text: '', type: '' }), 5000)
   }
 
   const loadData = async () => {
     setLoading(true)
-    addLog('Cargando datos...')
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { 
-      addLog('No hay usuario')
-      setLoading(false)
-      return 
-    }
-    addLog(`Usuario: ${user.email}`)
+    if (!user) { setLoading(false); return }
 
     const { data: ownerBiz } = await supabase.from('businesses').select('*').eq('owner_id', user.id).single()
 
     if (ownerBiz) {
-      addLog(`Negocio encontrado: ${ownerBiz.name}`)
       setBusiness(ownerBiz)
       setName(ownerBiz.name)
       setCurrency(ownerBiz.currency_symbol)
       setTax(String(ownerBiz.tax_percentage))
       setLoyaltyRate(String(ownerBiz.loyalty_points_rate || 10))
-      const { data: profs } = await supabase.from('profiles').select('*').eq('business_id', ownerBiz.id).order('created_at', { ascending: false })
+      
+      // Recargar empleados con los datos más recientes
+      const { data: profs, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('business_id', ownerBiz.id)
+        .order('created_at', { ascending: false })
+      
+      if (error) {
+        console.error('Error cargando empleados:', error)
+      }
       setProfiles(profs || [])
-      addLog(`Empleados cargados: ${(profs || []).length}`)
-    } else {
-      addLog('No se encontró negocio')
     }
     
     setLoading(false)
@@ -103,23 +102,12 @@ export default function SettingsPage() {
   }
 
   const handleSaveEmployee = async () => {
-    addLog('=== Iniciando guardado ===')
     setDebugLogs([])
+    addLog('=== Iniciando guardado ===')
     
     if (!empForm.name) {
       showMessage('❌ El nombre es obligatorio', 'error')
       return
-    }
-
-    if (!editingEmployee) {
-      if (!empForm.email || !empForm.password) {
-        showMessage('❌ Email y contraseña son obligatorios', 'error')
-        return
-      }
-      if (empForm.password.length < 6) {
-        showMessage('❌ La contraseña debe tener al menos 6 caracteres', 'error')
-        return
-      }
     }
 
     if (!business) {
@@ -128,38 +116,52 @@ export default function SettingsPage() {
     }
 
     setSaving(true)
-    addLog('Estado: Guardando...')
 
     try {
       if (editingEmployee) {
-        // EDITAR
-        addLog('Modo: EDITAR empleado existente')
-        const updateData: any = {
-          full_name: empForm.name,
-          role: empForm.role,
-          permissions: empForm.permissions,
-        }
-        addLog(`Actualizando perfil ID: ${editingEmployee.id}`)
+        // EDITAR EMPLEADO EXISTENTE
+        addLog(`Modo: EDITAR empleado ID ${editingEmployee.id}`)
+        addLog(`Nombre: ${empForm.name}`)
+        addLog(`Rol: ${empForm.role}`)
+        addLog(`Permisos: ${JSON.stringify(empForm.permissions)}`)
 
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('profiles')
-          .update(updateData)
+          .update({
+            full_name: empForm.name,
+            role: empForm.role,
+            permissions: empForm.permissions,
+          })
           .eq('id', editingEmployee.id)
+          .select()
 
         if (error) {
-          addLog(`Error al editar: ${error.message}`)
-          showMessage('❌ Error al editar: ' + error.message, 'error')
+          addLog(`❌ Error: ${error.message}`)
+          showMessage('❌ Error al guardar: ' + error.message, 'error')
         } else {
-          addLog('✅ Perfil actualizado exitosamente')
-          showMessage('✅ Empleado actualizado', 'success')
+          addLog('✅ Perfil actualizado en la base de datos')
+          addLog(`Datos guardados: ${JSON.stringify(data)}`)
+          showMessage('✅ Empleado actualizado correctamente', 'success')
+          
+          // Forzar recarga de datos
+          await loadData()
           setShowEmployeeModal(false)
-          loadData()
+          setEditingEmployee(null)
         }
       } else {
-        // CREAR
+        // CREAR NUEVO EMPLEADO
         addLog('Modo: CREAR nuevo empleado')
-        addLog(`Email: ${empForm.email}`)
-        addLog('Creando usuario en Supabase Auth...')
+        
+        if (!empForm.email || !empForm.password) {
+          showMessage('❌ Email y contraseña son obligatorios', 'error')
+          setSaving(false)
+          return
+        }
+        if (empForm.password.length < 6) {
+          showMessage('❌ La contraseña debe tener al menos 6 caracteres', 'error')
+          setSaving(false)
+          return
+        }
 
         const { data, error: authError } = await supabase.auth.signUp({
           email: empForm.email,
@@ -167,63 +169,52 @@ export default function SettingsPage() {
         })
 
         if (authError) {
-          addLog(`Error de Auth: ${authError.message}`)
+          addLog(`❌ Error Auth: ${authError.message}`)
           showMessage('❌ Error: ' + authError.message, 'error')
           setSaving(false)
           return
         }
 
-        addLog(`Respuesta Auth: ${JSON.stringify(data?.user ? 'Usuario creado' : 'Sin usuario')}`)
-
         if (data.user) {
-          addLog(`User ID: ${data.user.id}`)
-          addLog('Insertando perfil en base de datos...')
-
-          const { data: profileData, error: profileError } = await supabase
-            .from('profiles')
-            .insert({
-              user_id: data.user.id,
-              business_id: business.id,
-              role: empForm.role,
-              full_name: empForm.name,
-              email: empForm.email,
-              active: true,
-              permissions: empForm.permissions,
-            })
-            .select()
+          const { error: profileError } = await supabase.from('profiles').insert({
+            user_id: data.user.id,
+            business_id: business.id,
+            role: empForm.role,
+            full_name: empForm.name,
+            email: empForm.email,
+            active: true,
+            permissions: empForm.permissions,
+          })
 
           if (profileError) {
-            addLog(`Error al insertar perfil: ${profileError.message}`)
-            showMessage('❌ Error al crear perfil: ' + profileError.message, 'error')
+            addLog(`❌ Error perfil: ${profileError.message}`)
+            showMessage('❌ Error: ' + profileError.message, 'error')
           } else {
-            addLog('✅ Perfil creado exitosamente')
-            addLog(`Perfil ID: ${profileData?.[0]?.id}`)
+            addLog('✅ Empleado creado')
             showMessage('✅ Empleado creado exitosamente', 'success')
-            setEmpForm({
-              email: '', name: '', password: '', role: 'seller',
-              permissions: { dashboard: false, pos: true, products: false, inventory: false, reports: false, suppliers: false, clients: true, expenses: false }
-            })
+            await loadData()
             setShowEmployeeModal(false)
-            loadData()
           }
         } else {
-          addLog('No se recibió user ID de Auth')
-          showMessage('❌ No se pudo crear el usuario. Verifica que el email no esté registrado.', 'error')
+          showMessage('❌ No se pudo crear el usuario', 'error')
         }
       }
     } catch (err: any) {
-      addLog(`Error inesperado: ${err.message || 'Desconocido'}`)
-      showMessage('❌ Error: ' + (err.message || 'Desconocido'), 'error')
+      addLog(`❌ Error inesperado: ${err.message}`)
+      showMessage('❌ Error: ' + err.message, 'error')
     }
 
-    addLog('=== Fin del proceso ===')
     setSaving(false)
   }
 
   const handleToggleActive = async (id: string, active: boolean) => {
-    await supabase.from('profiles').update({ active }).eq('id', id)
-    showMessage(active ? '✅ Empleado activado' : '⚠️ Empleado desactivado', 'success')
-    loadData()
+    const { error } = await supabase.from('profiles').update({ active }).eq('id', id)
+    if (error) {
+      showMessage('❌ Error: ' + error.message, 'error')
+    } else {
+      showMessage(active ? '✅ Empleado activado' : '⚠️ Empleado desactivado', 'success')
+      await loadData()
+    }
   }
 
   const handleDeleteEmployee = async (id: string) => {
@@ -233,7 +224,7 @@ export default function SettingsPage() {
       showMessage('❌ Error: ' + error.message, 'error')
     } else {
       showMessage('✅ Empleado eliminado', 'success')
-      loadData()
+      await loadData()
     }
   }
 
@@ -373,6 +364,13 @@ export default function SettingsPage() {
                 </>
               )}
 
+              {editingEmployee && (
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm text-blue-700">
+                  <p><strong>Email:</strong> {empForm.email}</p>
+                  <p className="text-xs mt-1">Para cambiar la contraseña, el empleado debe hacerlo desde su cuenta</p>
+                </div>
+              )}
+
               <div>
                 <label className="text-sm font-medium block mb-2">Rol</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -409,7 +407,7 @@ export default function SettingsPage() {
             
             <div className="flex gap-3 mt-6">
               <button onClick={handleSaveEmployee} disabled={saving} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl disabled:opacity-50">
-                {saving ? 'Guardando...' : (editingEmployee ? '💾 Guardar' : '✅ Crear')}
+                {saving ? 'Guardando...' : (editingEmployee ? '💾 Guardar Cambios' : '✅ Crear')}
               </button>
               <button onClick={() => { setShowEmployeeModal(false); setMessage({ text: '', type: '' }); setDebugLogs([]) }} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Cancelar</button>
             </div>
