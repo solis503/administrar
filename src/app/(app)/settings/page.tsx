@@ -22,7 +22,6 @@ export default function SettingsPage() {
   })
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState({ text: '', type: '' })
-  const [manualStep, setManualStep] = useState(1)
   const supabase = createClient()
 
   useEffect(() => { loadData() }, [])
@@ -109,7 +108,7 @@ export default function SettingsPage() {
 
     try {
       if (editingEmployee) {
-        // EDITAR
+        // EDITAR EMPLEADO
         const { error } = await supabase
           .from('profiles')
           .update({
@@ -122,7 +121,7 @@ export default function SettingsPage() {
         if (error) {
           showMessage('❌ Error: ' + error.message, 'error')
         } else {
-          showMessage('✅ Empleado actualizado', 'success')
+          showMessage('✅ Cambios guardados', 'success')
           await loadData()
           setShowEmployeeModal(false)
           setEditingEmployee(null)
@@ -147,29 +146,33 @@ export default function SettingsPage() {
           setShowEmployeeModal(false)
         }
       } else {
-        // INTENTAR CREAR AUTOMÁTICAMENTE
+        // CREAR AUTOMÁTICAMENTE
         if (!empForm.email || !empForm.password) {
           showMessage('❌ Email y contraseña son obligatorios', 'error')
           setSaving(false)
           return
         }
 
-        const { data, error: authError } = await supabase.auth.signUp({
+        if (empForm.password.length < 6) {
+          showMessage('❌ La contraseña debe tener al menos 6 caracteres', 'error')
+          setSaving(false)
+          return
+        }
+
+        const { data: authData, error: authError } = await supabase.auth.signUp({
           email: empForm.email,
           password: empForm.password,
         })
 
-        if (authError || !data.user) {
-          // Si falla, mostrar opción manual
-          showMessage('⚠️ No se pudo crear automáticamente. Usa el método manual.', 'error')
+        if (authError || !authData.user) {
+          showMessage('⚠️ No se pudo crear automáticamente. Usa el botón 🔧 Manual', 'error')
           setSaving(false)
-          setManualStep(1)
           setShowManualCreate(true)
           return
         }
 
         const { error: profileError } = await supabase.from('profiles').insert({
-          user_id: data.user.id,
+          user_id: authData.user.id,
           business_id: business.id,
           role: empForm.role,
           full_name: empForm.name,
@@ -204,7 +207,8 @@ export default function SettingsPage() {
   }
 
   const handleDeleteEmployee = async (id: string) => {
-    if (!confirm('¿Eliminar este empleado?')) return
+    if (!confirm('¿Eliminar este empleado permanentemente?')) return
+    
     const { error } = await supabase.from('profiles').delete().eq('id', id)
     if (error) {
       showMessage('❌ Error: ' + error.message, 'error')
@@ -249,7 +253,7 @@ export default function SettingsPage() {
       <h1 className="text-2xl font-bold mb-6">⚙️ Configuración</h1>
 
       {message.text && (
-        <div className={`mb-6 px-4 py-3 rounded-xl font-semibold ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : message.type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-yellow-50 text-yellow-700 border border-yellow-200'}`}>
+        <div className={`mb-6 px-4 py-3 rounded-xl font-semibold ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
           {message.text}
         </div>
       )}
@@ -328,7 +332,6 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Modal Crear/Editar Empleado */}
       {showEmployeeModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
@@ -356,15 +359,6 @@ export default function SettingsPage() {
               {editingEmployee && (
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm text-blue-700">
                   <p><strong>Email:</strong> {empForm.email}</p>
-                </div>
-              )}
-
-              {/* Input para User ID manual */}
-              {!editingEmployee && manualUserId && (
-                <div>
-                  <label className="text-sm font-medium block mb-2">Email del empleado</label>
-                  <input value={empForm.email} onChange={(e) => setEmpForm({ ...empForm, email: e.target.value })} className="w-full px-4 py-3 rounded-xl border outline-none" />
-                  <p className="text-xs text-gray-500 mt-1">El usuario ya fue creado en Supabase Auth</p>
                 </div>
               )}
 
@@ -403,88 +397,10 @@ export default function SettingsPage() {
             </div>
             
             <div className="flex gap-3 mt-6">
-              {editingEmployee || manualUserId ? (
-                <button onClick={handleSaveEmployee} disabled={saving} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl disabled:opacity-50">
-                  {saving ? 'Guardando...' : '💾 Guardar'}
-                </button>
-              ) : (
-                <>
-                  <button onClick={handleSaveEmployee} disabled={saving} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl disabled:opacity-50">
-                    {saving ? 'Creando...' : '✅ Crear Automático'}
-                  </button>
-                  <button onClick={() => { setManualStep(1); setShowManualCreate(true) }} className="px-4 py-3 bg-gray-600 text-white font-bold rounded-xl">
-                    🔧 Manual
-                  </button>
-                </>
-              )}
-              <button onClick={() => { setShowEmployeeModal(false); setShowManualCreate(false); setManualUserId('') }} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Cancelar</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Manual */}
-      {showManualCreate && !editingEmployee && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
-            <h2 className="text-xl font-bold mb-4">🔧 Crear Empleado Manualmente</h2>
-            
-            <div className="space-y-4">
-              {/* Paso 1 */}
-              <div className={`p-4 rounded-xl border-2 ${manualStep >= 1 ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}>
-                <h3 className="font-semibold mb-2">Paso 1: Crear usuario en Supabase Auth</h3>
-                <ol className="list-decimal list-inside text-sm space-y-1 mb-3">
-                  <li>Abre <a href="https://supabase.com/dashboard" target="_blank" className="text-blue-600 underline">Supabase Dashboard</a></li>
-                  <li>Ve a tu proyecto → <strong>Authentication</strong> → <strong>Users</strong></li>
-                  <li>Clic en <strong>"Add user"</strong> → <strong>"Create new user"</strong></li>
-                  <li>Email: <strong>{empForm.email || 'email del empleado'}</strong></li>
-                  <li>Password: (la que el empleado usará)</li>
-                  <li>✅ <strong>Activa "Auto Confirm User"</strong></li>
-                  <li>Clic en <strong>"Create user"</strong></li>
-                </ol>
-                <div>
-                  <label className="text-sm font-medium block mb-2">Pega aquí el User UID:</label>
-                  <input 
-                    value={manualUserId}
-                    onChange={(e) => setManualUserId(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border outline-none font-mono text-sm"
-                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  />
-                </div>
-              </div>
-
-              {/* Paso 2 */}
-              <div className={`p-4 rounded-xl border-2 ${manualStep >= 2 && manualUserId ? 'border-green-600 bg-green-50' : 'border-gray-300'}`}>
-                <h3 className="font-semibold mb-2">Paso 2: Ejecutar el SQL</h3>
-                {manualUserId ? (
-                  <>
-                    <p className="text-sm text-gray-600 mb-2">Copia este SQL y ejecútalo en <strong>SQL Editor</strong> de Supabase:</p>
-                    <div className="bg-gray-900 text-green-400 rounded-lg p-3 font-mono text-xs overflow-x-auto">
-                      <pre>{generateManualSQL()}</pre>
-                    </div>
-                    <button 
-                      onClick={() => { 
-                        navigator.clipboard.writeText(generateManualSQL())
-                        showMessage('✅ SQL copiado al portapapeles', 'success')
-                      }}
-                      className="mt-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold"
-                    >
-                      📋 Copiar SQL
-                    </button>
-                  </>
-                ) : (
-                  <p className="text-sm text-gray-500">Primero pega el User UID del paso 1</p>
-                )}
-              </div>
-            </div>
-            
-            <div className="flex gap-3 mt-6">
-              <button 
-                onClick={() => { setShowManualCreate(false) }}
-                className="px-6 py-3 bg-gray-100 rounded-xl font-semibold"
-              >
-                Cerrar
+              <button onClick={handleSaveEmployee} disabled={saving} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl disabled:opacity-50">
+                {saving ? 'Guardando...' : (editingEmployee ? '💾 Guardar' : '✅ Crear')}
               </button>
+              <button onClick={() => { setShowEmployeeModal(false); setShowManualCreate(false); setManualUserId('') }} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Cancelar</button>
             </div>
           </div>
         </div>
