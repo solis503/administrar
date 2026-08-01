@@ -8,7 +8,8 @@ export default function ProductsPage() {
   const [business, setBusiness] = useState<any>(null)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<any>(null)
-  const [form, setForm] = useState({ name: '', price: '', stock: '', unit: 'piezas' })
+  const [form, setForm] = useState({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: 'simple' })
+  const [recipeItems, setRecipeItems] = useState<any[]>([])
   const [showImport, setShowImport] = useState(false)
   const [importData, setImportData] = useState<any[]>([])
   const [importHeaders, setImportHeaders] = useState<string[]>([])
@@ -50,42 +51,76 @@ export default function ProductsPage() {
 
   const curr = business?.currency_symbol || '$'
 
-  const openCreate = () => {
+  const openCreate = (type: string = 'simple') => {
     setEditing(null)
-    setForm({ name: '', price: '', stock: '', unit: 'piezas' })
+    setForm({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: type })
+    setRecipeItems([])
     setShowForm(true)
   }
 
-  const openEdit = (product: any) => {
+  const openEdit = async (product: any) => {
     setEditing(product)
     setForm({
       name: product.name,
       price: String(product.price),
+      cost: String(product.cost || ''),
       stock: String(product.stock),
       unit: product.unit,
+      product_type: product.product_type,
     })
+    
+    if (product.product_type === 'receta') {
+      const { data } = await supabase
+        .from('recipe_items')
+        .select('*, products(name, unit)')
+        .eq('product_id', product.id)
+      setRecipeItems(data || [])
+    } else {
+      setRecipeItems([])
+    }
+    
     setShowForm(true)
   }
 
   const handleSave = async () => {
     if (!form.name || !business) return
     
-    if (editing) {
-      await supabase.from('products').update({
-        name: form.name,
-        price: parseFloat(form.price) || 0,
-        stock: parseFloat(form.stock) || 0,
-        unit: form.unit,
-      }).eq('id', editing.id)
-    } else {
-      await supabase.from('products').insert({
-        business_id: business.id,
-        name: form.name,
-        price: parseFloat(form.price) || 0,
-        stock: parseFloat(form.stock) || 0,
-        unit: form.unit,
-      })
+    const productData: any = {
+      business_id: business.id,
+      name: form.name,
+      price: parseFloat(form.price) || 0,
+      cost: parseFloat(form.cost) || 0,
+      stock: parseFloat(form.stock) || 0,
+      unit: form.unit,
+      product_type: form.product_type,
     }
+    
+    let productId: string
+    
+    if (editing) {
+      await supabase.from('products').update(productData).eq('id', editing.id)
+      productId = editing.id
+      
+      if (editing.product_type === 'receta') {
+        await supabase.from('recipe_items').delete().eq('product_id', editing.id)
+      }
+    } else {
+      const { data: newProduct } = await supabase.from('products').insert(productData).select().single()
+      productId = newProduct?.id || ''
+    }
+    
+    if (form.product_type === 'receta' && recipeItems.length > 0) {
+      for (const item of recipeItems) {
+        if (item.product_id && parseFloat(item.quantity) > 0) {
+          await supabase.from('recipe_items').insert({
+            product_id: productId,
+            ingredient_id: item.product_id,
+            quantity: parseFloat(item.quantity),
+          })
+        }
+      }
+    }
+    
     setShowForm(false)
     loadData()
   }
@@ -94,6 +129,28 @@ export default function ProductsPage() {
     if (!confirm('¿Eliminar?')) return
     await supabase.from('products').delete().eq('id', id)
     loadData()
+  }
+
+  const addRecipeIngredient = (ingredientId: string) => {
+    const ingredient = products.find(p => p.id === ingredientId)
+    if (!ingredient) return
+    
+    setRecipeItems([...recipeItems, {
+      product_id: ingredientId,
+      name: ingredient.name,
+      unit: ingredient.unit,
+      quantity: '1',
+    }])
+  }
+
+  const removeRecipeIngredient = (index: number) => {
+    setRecipeItems(recipeItems.filter((_, i) => i !== index))
+  }
+
+  const updateRecipeQuantity = (index: number, quantity: string) => {
+    const newItems = [...recipeItems]
+    newItems[index].quantity = quantity
+    setRecipeItems(newItems)
   }
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -136,6 +193,7 @@ export default function ProductsPage() {
         price: priceKey ? parseFloat(row[priceKey]) || 0 : 0,
         stock: stockKey ? parseFloat(row[stockKey]) || 0 : 0,
         unit: 'piezas',
+        product_type: 'simple',
       })
       count++
     }
@@ -158,6 +216,9 @@ export default function ProductsPage() {
     )
   }
 
+  const ingredients = products.filter(p => p.product_type !== 'receta')
+  const recipes = products.filter(p => p.product_type === 'receta')
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -166,51 +227,99 @@ export default function ProductsPage() {
           <button onClick={() => setShowImport(true)} className="bg-purple-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
             📥 Importar
           </button>
-          <button onClick={openCreate} className="bg-blue-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
+          <button onClick={() => openCreate('simple')} className="bg-blue-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
             + Producto
+          </button>
+          <button onClick={() => openCreate('receta')} className="bg-orange-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
+            🍽️ Receta
           </button>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50 border-b">
-            <tr>
-              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Producto</th>
-              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Precio</th>
-              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Stock</th>
-              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {products.map(p => (
-              <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openEdit(p)}>
-                <td className="px-4 py-3 font-medium">{p.name}</td>
-                <td className="px-4 py-3">{curr}{Number(p.price).toFixed(2)}</td>
-                <td className="px-4 py-3">
-                  <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">
-                    {Number(p.stock)}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }} 
-                    className="text-red-600 text-xs"
-                  >
-                    Eliminar
-                  </button>
-                </td>
+      {recipes.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-lg font-semibold mb-3">🍽️ Recetas (Licuados)</h2>
+          <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Receta</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Precio</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Stock</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {recipes.map(p => (
+                  <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openEdit(p)}>
+                    <td className="px-4 py-3">
+                      <span className="font-medium">{p.name}</span>
+                      <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">🍽️ Receta</span>
+                    </td>
+                    <td className="px-4 py-3">{curr}{Number(p.price).toFixed(2)}</td>
+                    <td className="px-4 py-3">
+                      <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">
+                        {Number(p.stock)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }} 
+                        className="text-red-600 text-xs"
+                      >
+                        Eliminar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div>
+        <h2 className="text-lg font-semibold mb-3">📦 Productos Simples</h2>
+        <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b">
+              <tr>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Producto</th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Precio</th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Stock</th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500"></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y">
+              {products.filter(p => p.product_type !== 'receta').map(p => (
+                <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openEdit(p)}>
+                  <td className="px-4 py-3 font-medium">{p.name}</td>
+                  <td className="px-4 py-3">{curr}{Number(p.price).toFixed(2)}</td>
+                  <td className="px-4 py-3">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">
+                      {Number(p.stock)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }} 
+                      className="text-red-600 text-xs"
+                    >
+                      Eliminar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {showForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6">
+          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">
-              {editing ? '✏️ Editar' : '+ Nuevo'} Producto
+              {editing ? '✏️ Editar' : '+ Nuevo'} {form.product_type === 'receta' ? 'Receta' : 'Producto'}
             </h2>
             <div className="space-y-4">
               <div>
@@ -219,27 +328,112 @@ export default function ProductsPage() {
                   value={form.name} 
                   onChange={(e) => setForm({ ...form, name: e.target.value })} 
                   className="w-full px-3 py-2 rounded-lg border" 
+                  placeholder={form.product_type === 'receta' ? 'Ej: Licuado de Fresa' : 'Ej: Fresa'}
                 />
               </div>
-              <div>
-                <label className="text-sm font-medium block mb-1">Precio</label>
-                <input 
-                  type="number" 
-                  value={form.price} 
-                  onChange={(e) => setForm({ ...form, price: e.target.value })} 
-                  className="w-full px-3 py-2 rounded-lg border" 
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium block mb-1">Precio de Venta</label>
+                  <input 
+                    type="number" 
+                    value={form.price} 
+                    onChange={(e) => setForm({ ...form, price: e.target.value })} 
+                    className="w-full px-3 py-2 rounded-lg border" 
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium block mb-1">Costo</label>
+                  <input 
+                    type="number" 
+                    value={form.cost} 
+                    onChange={(e) => setForm({ ...form, cost: e.target.value })} 
+                    className="w-full px-3 py-2 rounded-lg border" 
+                    placeholder="0.00"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="text-sm font-medium block mb-1">Stock</label>
-                <input 
-                  type="number" 
-                  value={form.stock} 
-                  onChange={(e) => setForm({ ...form, stock: e.target.value })} 
-                  className="w-full px-3 py-2 rounded-lg border" 
-                />
-              </div>
+              {form.product_type !== 'receta' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm font-medium block mb-1">Stock</label>
+                    <input 
+                      type="number" 
+                      value={form.stock} 
+                      onChange={(e) => setForm({ ...form, stock: e.target.value })} 
+                      className="w-full px-3 py-2 rounded-lg border" 
+                      placeholder="0"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium block mb-1">Unidad</label>
+                    <select 
+                      value={form.unit} 
+                      onChange={(e) => setForm({ ...form, unit: e.target.value })} 
+                      className="w-full px-3 py-2 rounded-lg border"
+                    >
+                      <option value="piezas">Piezas</option>
+                      <option value="kg">Kilogramos</option>
+                      <option value="litros">Litros</option>
+                      <option value="cajas">Cajas</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {form.product_type === 'receta' && (
+                <div className="border-t pt-4">
+                  <h3 className="font-semibold mb-3">🧩 Ingredientes de la Receta</h3>
+                  
+                  {recipeItems.length === 0 && (
+                    <p className="text-sm text-gray-500 mb-3">No hay ingredientes. Agrega uno abajo.</p>
+                  )}
+                  
+                  {recipeItems.map((item, index) => (
+                    <div key={index} className="flex items-center gap-2 bg-gray-50 rounded-lg p-3 mb-2">
+                      <span className="flex-1 font-medium">{item.name}</span>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        value={item.quantity} 
+                        onChange={(e) => updateRecipeQuantity(index, e.target.value)}
+                        className="w-24 px-2 py-1 border rounded text-center" 
+                        placeholder="Cantidad"
+                      />
+                      <span className="text-sm text-gray-500">{item.unit}</span>
+                      <button 
+                        onClick={() => removeRecipeIngredient(index)}
+                        className="text-red-500 font-bold"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                  
+                  <div className="mt-3">
+                    <label className="text-sm font-medium block mb-1">Agregar Ingrediente</label>
+                    <select 
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          addRecipeIngredient(e.target.value)
+                          e.target.value = ''
+                        }
+                      }}
+                      className="w-full px-3 py-2 rounded-lg border"
+                      defaultValue=""
+                    >
+                      <option value="">Seleccionar ingrediente...</option>
+                      {ingredients.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} (Stock: {p.stock} {p.unit})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
             </div>
+            
             <div className="flex gap-3 mt-6">
               <button onClick={handleSave} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl">
                 💾 Guardar
@@ -277,6 +471,7 @@ export default function ProductsPage() {
                     className="hidden" 
                   />
                 </label>
+                <p className="text-sm text-gray-500 mt-3">Solo importa productos simples (no recetas)</p>
               </div>
             )}
             
