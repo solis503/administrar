@@ -15,8 +15,30 @@ const AUTO_DETECT_HINTS: Record<string, string[]> = {
   name: ['nombre', 'producto', 'name', 'product', 'descripcion', 'artículo', 'articulo'],
   price: ['precio', 'price', 'pvp', 'venta'],
   cost: ['costo', 'cost'],
-  stock: ['stock', 'cantidad', 'existencia', 'quantity'],
+  stock: ['stock', 'cantidad', 'cant', 'existencia', 'quantity'],
   unit: ['unidad', 'unit'],
+}
+
+// Busca la fila que más se parece a encabezados de tabla (nombre/precio/costo/etc.),
+// para saltar filas de reportes/metadatos que a veces vienen arriba del archivo real.
+const findHeaderRowIndex = (aoa: any[][]): number => {
+  const allHints = Object.values(AUTO_DETECT_HINTS).flat()
+  let bestRow = 0
+  let bestScore = 0
+  const maxScan = Math.min(aoa.length, 25)
+  for (let i = 0; i < maxScan; i++) {
+    const row = aoa[i] || []
+    const nonEmptyCells = row.filter((c) => String(c ?? '').trim() !== '')
+    if (nonEmptyCells.length < 2) continue // una fila de tabla real suele tener varias columnas
+    const score = nonEmptyCells.filter((c) =>
+      allHints.some((hint) => String(c).toLowerCase().trim().includes(hint))
+    ).length
+    if (score > bestScore) {
+      bestScore = score
+      bestRow = i
+    }
+  }
+  return bestScore >= 2 ? bestRow : 0
 }
 
 export default function ProductsPage() {
@@ -197,14 +219,35 @@ export default function ProductsPage() {
         const data = evt.target?.result
         const wb = XLSX.read(data, { type: 'array', cellDates: true })
         const sheet = wb.Sheets[wb.SheetNames[0]]
-        const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' })
 
-        if (!rows.length) {
-          alert('El archivo no tiene filas de datos')
+        // Leemos como matriz cruda primero para poder ubicar dónde empieza la tabla real
+        const aoa: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false })
+        if (!aoa.length) {
+          alert('El archivo no tiene datos')
           return
         }
 
-        const headers = Object.keys(rows[0])
+        const headerRowIndex = findHeaderRowIndex(aoa)
+        const rawHeaders = aoa[headerRowIndex].map((h, i) => {
+          const clean = String(h ?? '').trim()
+          return clean || `Columna ${i + 1}`
+        })
+
+        const rows = aoa
+          .slice(headerRowIndex + 1)
+          .filter((r) => r.some((c) => String(c ?? '').trim() !== ''))
+          .map((r) => {
+            const obj: Record<string, any> = {}
+            rawHeaders.forEach((h, i) => { obj[h] = r[i] ?? '' })
+            return obj
+          })
+
+        if (!rows.length) {
+          alert('No se encontraron filas de productos después de los encabezados')
+          return
+        }
+
+        const headers = rawHeaders
         setImportHeaders(headers)
         setImportRows(rows)
 
