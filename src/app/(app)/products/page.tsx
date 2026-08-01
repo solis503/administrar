@@ -16,6 +16,7 @@ export default function ProductsPage() {
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({})
   const [importStep, setImportStep] = useState('upload')
   const [loading, setLoading] = useState(true)
+  const [importLog, setImportLog] = useState<string[]>([])
   const supabase = createClient()
 
   useEffect(() => {
@@ -159,53 +160,163 @@ export default function ProductsPage() {
     
     const reader = new FileReader()
     reader.onload = (evt) => {
-      const data = evt.target?.result
-      const wb = XLSX.read(data, { type: 'binary' })
-      const sheet = wb.Sheets[wb.SheetNames[0]]
-      const jsonData: any[] = XLSX.utils.sheet_to_json(sheet)
-      
-      if (jsonData && jsonData.length > 0) {
-        const headers = Object.keys(jsonData[0])
-        setImportHeaders(headers)
-        setImportData(jsonData)
-        setImportStep('map')
+      try {
+        const data = evt.target?.result
+        const wb = XLSX.read(data, { type: 'binary' })
+        const sheet = wb.Sheets[wb.SheetNames[0]]
+        const jsonData: any[] = XLSX.utils.sheet_to_json(sheet)
+        
+        if (jsonData && jsonData.length > 0) {
+          const headers = Object.keys(jsonData[0])
+          setImportHeaders(headers)
+          setImportData(jsonData)
+          setImportLog([])
+          
+          // Auto-detectar columnas
+          const mapping: Record<string, string> = {}
+          const firstRow = jsonData[0]
+          
+          headers.forEach(header => {
+            const lower = header.toLowerCase().trim()
+            if (lower.includes('nombre') || lower.includes('name') || lower.includes('producto') || lower.includes('product')) {
+              mapping['name'] = header
+            } else if (lower.includes('precio') || lower.includes('price') || lower.includes('costo') || lower === 'pvp') {
+              mapping['price'] = header
+            } else if (lower.includes('stock') || lower.includes('cantidad') || lower.includes('quantity') || lower.includes('existencia')) {
+              mapping['stock'] = header
+            } else if (lower.includes('unidad') || lower.includes('unit')) {
+              mapping['unit'] = header
+            } else if (lower.includes('receta') || lower.includes('recipe') || lower.includes('ingredientes')) {
+              mapping['recipe'] = header
+            }
+          })
+          
+          setColumnMapping(mapping)
+          setImportStep('map')
+        }
+      } catch (error) {
+        alert('Error al leer el archivo: ' + (error as Error).message)
       }
     }
     reader.readAsBinaryString(file)
   }
 
+  const parseNumber = (value: any): number => {
+    if (!value && value !== 0) return 0
+    const str = String(value).replace(/[^\d.-]/g, '')
+    const num = parseFloat(str)
+    return isNaN(num) ? 0 : num
+  }
+
   const handleImport = async () => {
     if (!business || !importData.length) return
     setLoading(true)
-    let count = 0
+    setImportLog([])
+    
+    let successCount = 0
+    let errorCount = 0
+    const logs: string[] = []
+    const createdIngredients = new Map<string, string>()
     
     for (const row of importData) {
-      const nameKey = Object.keys(columnMapping).find(k => columnMapping[k] === 'name')
-      const priceKey = Object.keys(columnMapping).find(k => columnMapping[k] === 'price')
-      const stockKey = Object.keys(columnMapping).find(k => columnMapping[k] === 'stock')
-      
-      const name = nameKey ? String(row[nameKey] || '').trim() : ''
-      if (!name) continue
-      
-      await supabase.from('products').insert({
-        business_id: business.id,
-        name: name,
-        price: priceKey ? parseFloat(row[priceKey]) || 0 : 0,
-        stock: stockKey ? parseFloat(row[stockKey]) || 0 : 0,
-        unit: 'piezas',
-        product_type: 'simple',
-      })
-      count++
+      try {
+        const name = columnMapping['name'] ? String(row[columnMapping['name']] || '').trim() : ''
+        if (!name) {
+          logs.push('⚠️ Fila sin nombre, omitida')
+          errorCount++
+          continue
+        }
+        
+        const price = columnMapping['price'] ? parseNumber(row[columnMapping['price']]) : 0
+        const stock = columnMapping['stock'] ? parseNumber(row[columnMapping['stock']]) : 0
+        const unit = columnMapping['unit'] ? String(row[columnMapping['unit']] || 'piezas').toLowerCase() : 'piezas'
+        const recipe = columnMapping['recipe'] ? String(row[columnMapping['recipe']] || '').trim() : ''
+        
+        logs.push(`📦 Procesando: ${name} (${curr}${price.toFixed(2)}, ${stock} ${unit})`)
+        
+        const { data: product, error: productError } = await supabase
+          .from('products')
+          .insert({
+            business_id: business.id,
+            name: name,
+            price: price,
+            stock: stock,
+            unit: unit,
+            product_type: recipe ? 'receta' : 'simple',
+          })
+          .select()
+          .single()
+        
+        if (productError) {
+          logs.push(`❌ Error: ${productError.message}`)
+          errorCount++
+          continue
+        }
+        
+        if (recipe && product) {
+          const ingredients = recipe.split(/[,;+]/).map(s => s.trim()).filter(s => s)
+          logs.push(`🧩 Ingredientes: ${ingredients.join(', ')}`)
+          
+          for (const ingredientName of ingredients) {
+            let ingredientId = createdIngredients.get(ingredientName.toLowerCase())
+            
+            if (!ingredientId) {
+              const existing = products.find(p => p.name.toLowerCase() === ingredientName.toLowerCase())
+              if (existing) {
+                ingredientId = existing.id
+              } else {
+                const { data: newIngredient, error: ingredientError } = await supabase
+                  .from('products')
+                  .insert({
+                    business_id: business.id,
+                    name: ingredientName,
+                    price: 0,
+                    stock: 0,
+                    unit: 'piezas',
+                    product_type: 'simple',
+                  })
+                  .select()
+                  .single()
+                
+                if (ingredientError) {
+                  logs.push(`⚠️ No se pudo crear ingrediente: ${ingredientName}`)
+                  continue
+                }
+                
+                ingredientId = newIngredient.id
+                createdIngredients.set(ingredientName.toLowerCase(), ingredientId)
+                logs.push(`✅ Ingrediente creado: ${ingredientName}`)
+              }
+            }
+            
+            await supabase.from('recipe_items').insert({
+              product_id: product.id,
+              ingredient_id: ingredientId,
+              quantity: 1,
+            })
+          }
+        }
+        
+        successCount++
+      } catch (error) {
+        logs.push(`❌ Error: ${(error as Error).message}`)
+        errorCount++
+      }
     }
     
+    setImportLog(logs)
     setLoading(false)
-    setShowImport(false)
-    setImportData([])
-    setImportHeaders([])
-    setColumnMapping({})
-    setImportStep('upload')
-    await loadData()
-    alert('✅ ' + count + ' productos importados')
+    
+    setTimeout(() => {
+      setShowImport(false)
+      setImportData([])
+      setImportHeaders([])
+      setColumnMapping({})
+      setImportStep('upload')
+      setImportLog([])
+      loadData()
+      alert(`✅ Importación completada\n✓ ${successCount} productos\n✗ ${errorCount} errores`)
+    }, 3000)
   }
 
   if (loading) {
@@ -238,7 +349,7 @@ export default function ProductsPage() {
 
       {recipes.length > 0 && (
         <div className="mb-6">
-          <h2 className="text-lg font-semibold mb-3">🍽️ Recetas (Licuados)</h2>
+          <h2 className="text-lg font-semibold mb-3">🍽️ Recetas</h2>
           <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
             <table className="w-full">
               <thead className="bg-gray-50 border-b">
@@ -254,7 +365,7 @@ export default function ProductsPage() {
                   <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openEdit(p)}>
                     <td className="px-4 py-3">
                       <span className="font-medium">{p.name}</span>
-                      <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">🍽️ Receta</span>
+                      <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">🍽️</span>
                     </td>
                     <td className="px-4 py-3">{curr}{Number(p.price).toFixed(2)}</td>
                     <td className="px-4 py-3">
@@ -279,7 +390,7 @@ export default function ProductsPage() {
       )}
 
       <div>
-        <h2 className="text-lg font-semibold mb-3">📦 Productos Simples</h2>
+        <h2 className="text-lg font-semibold mb-3">📦 Productos</h2>
         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
           <table className="w-full">
             <thead className="bg-gray-50 border-b">
@@ -448,7 +559,7 @@ export default function ProductsPage() {
 
       {showImport && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between mb-4">
               <h2 className="text-xl font-bold">📥 Importar Excel</h2>
               <button 
@@ -462,6 +573,7 @@ export default function ProductsPage() {
             {importStep === 'upload' && (
               <div className="text-center py-8 border-2 border-dashed rounded-2xl">
                 <p className="text-4xl mb-4">📄</p>
+                <p className="mb-4">Selecciona tu archivo Excel o CSV</p>
                 <label className="inline-block px-6 py-3 bg-purple-600 text-white rounded-xl font-semibold cursor-pointer">
                   Elegir Archivo
                   <input 
@@ -471,16 +583,25 @@ export default function ProductsPage() {
                     className="hidden" 
                   />
                 </label>
-                <p className="text-sm text-gray-500 mt-3">Solo importa productos simples (no recetas)</p>
+                <div className="mt-4 text-left bg-blue-50 border border-blue-200 rounded-xl p-4">
+                  <p className="font-semibold mb-2">📋 Columnas detectadas automáticamente:</p>
+                  <ul className="text-sm space-y-1">
+                    <li>• <strong>Nombre</strong>, <strong>Producto</strong>, <strong>Name</strong></li>
+                    <li>• <strong>Precio</strong>, <strong>Price</strong>, <strong>PVP</strong></li>
+                    <li>• <strong>Stock</strong>, <strong>Cantidad</strong>, <strong>Quantity</strong></li>
+                    <li>• <strong>Unidad</strong>, <strong>Unit</strong></li>
+                    <li>• <strong>Receta</strong>, <strong>Ingredientes</strong> (opcional)</li>
+                  </ul>
+                </div>
               </div>
             )}
             
             {importStep === 'map' && (
               <div>
-                <p className="mb-4">{importData.length} filas. Asigna columnas:</p>
-                {['name', 'price', 'stock'].map(field => (
+                <p className="mb-4">{importData.length} filas detectadas. Verifica el mapeo:</p>
+                {['name', 'price', 'stock', 'unit', 'recipe'].map(field => (
                   <div key={field} className="flex items-center gap-4 mb-2">
-                    <label className="w-20 text-sm font-medium">{field}</label>
+                    <label className="w-20 text-sm font-medium capitalize">{field}</label>
                     <select 
                       value={columnMapping[field] || ''} 
                       onChange={(e) => setColumnMapping({ ...columnMapping, [field]: e.target.value })}
@@ -505,9 +626,16 @@ export default function ProductsPage() {
             {importStep === 'preview' && (
               <div>
                 <p className="mb-4">Se importarán {importData.length} productos</p>
+                
+                {importLog.length > 0 && (
+                  <div className="bg-gray-900 text-green-400 rounded-lg p-3 mb-4 max-h-60 overflow-y-auto font-mono text-xs">
+                    {importLog.map((log, i) => <div key={i}>{log}</div>)}
+                  </div>
+                )}
+                
                 <div className="flex gap-3">
-                  <button onClick={handleImport} className="px-6 py-2 bg-green-600 text-white rounded-lg font-semibold">
-                    ✅ Importar
+                  <button onClick={handleImport} disabled={loading} className="px-6 py-2 bg-green-600 text-white rounded-lg font-semibold disabled:opacity-50">
+                    {loading ? 'Importando...' : '✅ Importar'}
                   </button>
                   <button onClick={() => setImportStep('map')} className="px-6 py-2 bg-gray-100 rounded-lg font-semibold">
                     Volver
