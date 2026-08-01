@@ -1,7 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
-import * as XLSX from 'xlsx'
 
 export default function ProductsPage() {
   const [products, setProducts] = useState([])
@@ -10,11 +9,6 @@ export default function ProductsPage() {
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: 'simple' })
   const [recipeItems, setRecipeItems] = useState([])
-  const [showImport, setShowImport] = useState(false)
-  const [importData, setImportData] = useState([])
-  const [importHeaders, setImportHeaders] = useState([])
-  const [columnMapping, setColumnMapping] = useState({})
-  const [importStep, setImportStep] = useState('upload')
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
 
@@ -153,85 +147,6 @@ export default function ProductsPage() {
     setRecipeItems(newItems)
   }
 
-  const handleFileUpload = (e) => {
-    const file = e.target.files ? e.target.files[0] : null
-    if (!file) return
-    
-    const reader = new FileReader()
-    reader.onload = (evt) => {
-      const data = evt.target ? evt.target.result : null
-      const wb = XLSX.read(data, { type: 'binary' })
-      const sheet = wb.Sheets[wb.SheetNames[0]]
-      const jsonData = XLSX.utils.sheet_to_json(sheet)
-      
-      if (jsonData && jsonData.length > 0) {
-        const headers = Object.keys(jsonData[0])
-        setImportHeaders(headers)
-        setImportData(jsonData)
-        
-        const mapping = {}
-        headers.forEach(header => {
-          const lower = header.toLowerCase()
-          if (lower.includes('nombre') || lower.includes('name') || lower.includes('producto')) {
-            mapping['name'] = header
-          } else if (lower.includes('precio') || lower.includes('price')) {
-            mapping['price'] = header
-          } else if (lower.includes('stock') || lower.includes('cantidad')) {
-            mapping['stock'] = header
-          } else if (lower.includes('unidad') || lower.includes('unit')) {
-            mapping['unit'] = header
-          }
-        })
-        
-        setColumnMapping(mapping)
-        setImportStep('map')
-      }
-    }
-    reader.readAsBinaryString(file)
-  }
-
-  const parseNumber = (value) => {
-    if (!value && value !== 0) return 0
-    const str = String(value).replace(/[^\d.-]/g, '')
-    const num = parseFloat(str)
-    return isNaN(num) ? 0 : num
-  }
-
-  const handleImport = async () => {
-    if (!business || !importData.length) return
-    setLoading(true)
-    
-    let count = 0
-    
-    for (const row of importData) {
-      const name = columnMapping['name'] ? String(row[columnMapping['name']] || '').trim() : ''
-      if (!name) continue
-      
-      const price = columnMapping['price'] ? parseNumber(row[columnMapping['price']]) : 0
-      const stock = columnMapping['stock'] ? parseNumber(row[columnMapping['stock']]) : 0
-      const unit = columnMapping['unit'] ? String(row[columnMapping['unit']] || 'piezas') : 'piezas'
-      
-      await supabase.from('products').insert({
-        business_id: business.id,
-        name: name,
-        price: price,
-        stock: stock,
-        unit: unit,
-        product_type: 'simple',
-      })
-      count++
-    }
-    
-    setLoading(false)
-    setShowImport(false)
-    setImportData([])
-    setImportHeaders([])
-    setColumnMapping({})
-    setImportStep('upload')
-    loadData()
-    alert('✅ ' + count + ' productos importados')
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -248,9 +163,6 @@ export default function ProductsPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">📦 Productos</h1>
         <div className="flex gap-2">
-          <button onClick={() => setShowImport(true)} className="bg-purple-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
-            📥 Importar
-          </button>
           <button onClick={() => openCreate('simple')} className="bg-blue-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
             + Producto
           </button>
@@ -457,78 +369,6 @@ export default function ProductsPage() {
                 Cancelar
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {showImport && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between mb-4">
-              <h2 className="text-xl font-bold">📥 Importar Excel</h2>
-              <button 
-                onClick={() => { setShowImport(false); setImportStep('upload') }} 
-                className="text-2xl"
-              >
-                ✕
-              </button>
-            </div>
-            
-            {importStep === 'upload' && (
-              <div className="text-center py-8 border-2 border-dashed rounded-2xl">
-                <p className="text-4xl mb-4">📄</p>
-                <label className="inline-block px-6 py-3 bg-purple-600 text-white rounded-xl font-semibold cursor-pointer">
-                  Elegir Archivo
-                  <input 
-                    type="file" 
-                    accept=".xlsx,.xls,.csv" 
-                    onChange={handleFileUpload} 
-                    className="hidden" 
-                  />
-                </label>
-              </div>
-            )}
-            
-            {importStep === 'map' && (
-              <div>
-                <p className="mb-4">{importData.length} filas. Asigna columnas:</p>
-                {['name', 'price', 'stock', 'unit'].map(field => (
-                  <div key={field} className="flex items-center gap-4 mb-2">
-                    <label className="w-20 text-sm font-medium">{field}</label>
-                    <select 
-                      value={columnMapping[field] || ''} 
-                      onChange={(e) => setColumnMapping({ ...columnMapping, [field]: e.target.value })}
-                      className="flex-1 px-3 py-2 rounded-lg border"
-                    >
-                      <option value="">No usar</option>
-                      {importHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                    </select>
-                  </div>
-                ))}
-                <div className="flex gap-3 mt-4">
-                  <button onClick={() => setImportStep('preview')} className="px-6 py-2 bg-purple-600 text-white rounded-lg font-semibold">
-                    Siguiente
-                  </button>
-                  <button onClick={() => setImportStep('upload')} className="px-6 py-2 bg-gray-100 rounded-lg font-semibold">
-                    Volver
-                  </button>
-                </div>
-              </div>
-            )}
-            
-            {importStep === 'preview' && (
-              <div>
-                <p className="mb-4">Se importarán {importData.length} productos</p>
-                <div className="flex gap-3">
-                  <button onClick={handleImport} className="px-6 py-2 bg-green-600 text-white rounded-lg font-semibold">
-                    ✅ Importar
-                  </button>
-                  <button onClick={() => setImportStep('map')} className="px-6 py-2 bg-gray-100 rounded-lg font-semibold">
-                    Volver
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       )}
