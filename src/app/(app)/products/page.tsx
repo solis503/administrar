@@ -1,6 +1,23 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
+import * as XLSX from 'xlsx'
+
+const FIELD_LABELS: Record<string, string> = {
+  name: 'Nombre del producto (obligatorio)',
+  price: 'Precio de venta',
+  cost: 'Costo',
+  stock: 'Stock / Cantidad',
+  unit: 'Unidad',
+}
+
+const AUTO_DETECT_HINTS: Record<string, string[]> = {
+  name: ['nombre', 'producto', 'name', 'product', 'descripcion', 'artículo', 'articulo'],
+  price: ['precio', 'price', 'pvp', 'venta'],
+  cost: ['costo', 'cost'],
+  stock: ['stock', 'cantidad', 'existencia', 'quantity'],
+  unit: ['unidad', 'unit'],
+}
 
 export default function ProductsPage() {
   const [products, setProducts] = useState([])
@@ -10,6 +27,13 @@ export default function ProductsPage() {
   const [form, setForm] = useState({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: 'simple' })
   const [recipeItems, setRecipeItems] = useState([])
   const [loading, setLoading] = useState(true)
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importStep, setImportStep] = useState('upload') // upload | map | result
+  const [importHeaders, setImportHeaders] = useState<string[]>([])
+  const [importRows, setImportRows] = useState<any[]>([])
+  const [columnMapping, setColumnMapping] = useState<Record<string, string>>({})
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<{ success: number; skipped: string[] }>({ success: 0, skipped: [] })
   const supabase = createClient()
 
   useEffect(() => {
@@ -147,6 +171,107 @@ export default function ProductsPage() {
     setRecipeItems(newItems)
   }
 
+  const openImportModal = () => {
+    setImportStep('upload')
+    setImportHeaders([])
+    setImportRows([])
+    setColumnMapping({})
+    setImportResult({ success: 0, skipped: [] })
+    setShowImportModal(true)
+  }
+
+  const parseNumber = (value: any): number => {
+    if (value === undefined || value === null || value === '') return 0
+    const str = String(value).replace(/[^\d.-]/g, '')
+    const num = parseFloat(str)
+    return isNaN(num) ? 0 : num
+  }
+
+  const handleExcelFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = (evt) => {
+      try {
+        const data = evt.target?.result
+        const wb = XLSX.read(data, { type: 'array', cellDates: true })
+        const sheet = wb.Sheets[wb.SheetNames[0]]
+        const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' })
+
+        if (!rows.length) {
+          alert('El archivo no tiene filas de datos')
+          return
+        }
+
+        const headers = Object.keys(rows[0])
+        setImportHeaders(headers)
+        setImportRows(rows)
+
+        // Auto-detectar columnas como sugerencia (el usuario confirma/corrige después)
+        const mapping: Record<string, string> = {}
+        for (const field of Object.keys(AUTO_DETECT_HINTS)) {
+          const match = headers.find((h) =>
+            AUTO_DETECT_HINTS[field].some((hint) => h.toLowerCase().trim().includes(hint))
+          )
+          if (match) mapping[field] = match
+        }
+        setColumnMapping(mapping)
+        setImportStep('map')
+      } catch (err: any) {
+        alert('No se pudo leer el archivo: ' + err.message)
+      }
+    }
+    reader.readAsArrayBuffer(file)
+    e.target.value = ''
+  }
+
+  const handleConfirmImport = async () => {
+    if (!business || !importRows.length) return
+    if (!columnMapping.name) {
+      alert('Tenés que indicar cuál columna es el nombre del producto')
+      return
+    }
+
+    setImporting(true)
+    const skipped: string[] = []
+    const toInsert: any[] = []
+
+    importRows.forEach((row, i) => {
+      const name = String(row[columnMapping.name] ?? '').trim()
+      if (!name) {
+        skipped.push(`Fila ${i + 2}: sin nombre, se omitió`)
+        return
+      }
+      toInsert.push({
+        business_id: business.id,
+        name,
+        price: columnMapping.price ? parseNumber(row[columnMapping.price]) : 0,
+        cost: columnMapping.cost ? parseNumber(row[columnMapping.cost]) : 0,
+        stock: columnMapping.stock ? parseNumber(row[columnMapping.stock]) : 0,
+        unit: columnMapping.unit ? String(row[columnMapping.unit] || 'piezas').trim() : 'piezas',
+        product_type: 'simple',
+      })
+    })
+
+    let successCount = 0
+    const chunkSize = 50
+    for (let i = 0; i < toInsert.length; i += chunkSize) {
+      const chunk = toInsert.slice(i, i + chunkSize)
+      const { error } = await supabase.from('products').insert(chunk)
+      if (error) {
+        chunk.forEach((p) => skipped.push(`${p.name}: ${error.message}`))
+      } else {
+        successCount += chunk.length
+      }
+    }
+
+    setImportResult({ success: successCount, skipped })
+    setImportStep('result')
+    setImporting(false)
+    await loadData()
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -163,6 +288,9 @@ export default function ProductsPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">📦 Productos</h1>
         <div className="flex gap-2">
+          <button onClick={openImportModal} className="bg-gray-100 text-gray-700 px-3 py-2 rounded-xl text-sm font-semibold border">
+            📥 Importar Excel
+          </button>
           <button onClick={() => openCreate('simple')} className="bg-blue-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
             + Producto
           </button>
@@ -369,6 +497,122 @@ export default function ProductsPage() {
                 Cancelar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {showImportModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">📥 Importar Productos desde Excel</h2>
+
+            {importStep === 'upload' && (
+              <div>
+                <p className="text-sm text-gray-600 mb-4">
+                  Subí un archivo .xlsx o .csv. La primera fila debe tener los encabezados de columna (por ejemplo: Nombre, Precio, Stock).
+                </p>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleExcelFile}
+                  className="w-full px-3 py-2 rounded-lg border"
+                />
+              </div>
+            )}
+
+            {importStep === 'map' && (
+              <div>
+                <p className="text-sm text-gray-600 mb-4">
+                  Se encontraron <strong>{importRows.length}</strong> filas. Confirmá qué columna de tu archivo corresponde a cada campo (tratamos de adivinar, pero revisalo antes de continuar):
+                </p>
+                <div className="space-y-3 mb-4">
+                  {Object.keys(FIELD_LABELS).map((field) => (
+                    <div key={field} className="flex items-center gap-3">
+                      <label className="text-sm font-medium w-56">{FIELD_LABELS[field]}</label>
+                      <select
+                        value={columnMapping[field] || ''}
+                        onChange={(e) => setColumnMapping({ ...columnMapping, [field]: e.target.value })}
+                        className="flex-1 px-3 py-2 rounded-lg border"
+                      >
+                        <option value="">-- No importar este campo --</option>
+                        {importHeaders.map((h) => (
+                          <option key={h} value={h}>{h}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="border rounded-xl overflow-hidden mb-4">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        {Object.keys(FIELD_LABELS).map((field) => (
+                          <th key={field} className="text-left px-3 py-2 text-xs font-semibold text-gray-500">
+                            {FIELD_LABELS[field].split(' (')[0]}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {importRows.slice(0, 5).map((row, i) => (
+                        <tr key={i}>
+                          {Object.keys(FIELD_LABELS).map((field) => (
+                            <td key={field} className="px-3 py-2">
+                              {columnMapping[field] ? String(row[columnMapping[field]] ?? '') : <span className="text-gray-300">—</span>}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-gray-400 mb-4">Vista previa de las primeras 5 filas. Si no se ve como esperabas, ajustá el mapeo de columnas arriba.</p>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleConfirmImport}
+                    disabled={importing}
+                    className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl disabled:opacity-50"
+                  >
+                    {importing ? 'Importando...' : `✅ Importar ${importRows.length} filas`}
+                  </button>
+                  <button onClick={() => setImportStep('upload')} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">
+                    Volver
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {importStep === 'result' && (
+              <div>
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-4">
+                  <p className="font-semibold text-green-700">✅ {importResult.success} productos importados correctamente</p>
+                </div>
+                {importResult.skipped.length > 0 && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-4 max-h-48 overflow-y-auto">
+                    <p className="font-semibold text-yellow-700 mb-2">⚠️ {importResult.skipped.length} filas con problemas:</p>
+                    <ul className="text-sm text-yellow-700 list-disc pl-5 space-y-1">
+                      {importResult.skipped.map((s, i) => <li key={i}>{s}</li>)}
+                    </ul>
+                  </div>
+                )}
+                <button
+                  onClick={() => setShowImportModal(false)}
+                  className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl"
+                >
+                  Cerrar
+                </button>
+              </div>
+            )}
+
+            {importStep !== 'result' && (
+              <button
+                onClick={() => setShowImportModal(false)}
+                className="w-full mt-3 py-2 text-gray-500 text-sm font-semibold"
+              >
+                Cancelar
+              </button>
+            )}
           </div>
         </div>
       )}
