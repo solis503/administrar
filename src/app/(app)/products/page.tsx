@@ -20,12 +20,12 @@ const AUTO_DETECT_HINTS: Record<string, string[]> = {
 }
 
 export default function ProductsPage() {
-  const [products, setProducts] = useState([])
-  const [business, setBusiness] = useState(null)
+  const [products, setProducts] = useState<any[]>([])
+  const [business, setBusiness] = useState<any>(null)
   const [showForm, setShowForm] = useState(false)
-  const [editing, setEditing] = useState(null)
+  const [editing, setEditing] = useState<any>(null)
   const [form, setForm] = useState({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: 'simple' })
-  const [recipeItems, setRecipeItems] = useState([])
+  const [recipeItems, setRecipeItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [showImportModal, setShowImportModal] = useState(false)
   const [importStep, setImportStep] = useState('upload') // upload | map | result
@@ -69,14 +69,14 @@ export default function ProductsPage() {
 
   const curr = business ? business.currency_symbol : '$'
 
-  const openCreate = (type) => {
+  const openCreate = (type: string) => {
     setEditing(null)
     setForm({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: type })
     setRecipeItems([])
     setShowForm(true)
   }
 
-  const openEdit = async (product) => {
+  const openEdit = async (product: any) => {
     setEditing(product)
     setForm({
       name: product.name,
@@ -143,13 +143,13 @@ export default function ProductsPage() {
     loadData()
   }
 
-  const handleDelete = async (id) => {
+  const handleDelete = async (id: string) => {
     if (!confirm('¿Eliminar?')) return
     await supabase.from('products').delete().eq('id', id)
     loadData()
   }
 
-  const addRecipeIngredient = (ingredientId) => {
+  const addRecipeIngredient = (ingredientId: string) => {
     const ingredient = products.find(p => p.id === ingredientId)
     if (!ingredient) return
     
@@ -161,11 +161,11 @@ export default function ProductsPage() {
     }])
   }
 
-  const removeRecipeIngredient = (index) => {
+  const removeRecipeIngredient = (index: number) => {
     setRecipeItems(recipeItems.filter((_, i) => i !== index))
   }
 
-  const updateRecipeQuantity = (index, quantity) => {
+  const updateRecipeQuantity = (index: number, quantity: string) => {
     const newItems = [...recipeItems]
     newItems[index].quantity = quantity
     setRecipeItems(newItems)
