@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
+import { useBranch } from '@/lib/branch-context'
 
 export default function InventoryPage() {
   const [products, setProducts] = useState<any[]>([])
@@ -10,10 +11,11 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<string[]>([])
   const supabase = createClient()
+  const { selectedBranchId } = useBranch()
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [selectedBranchId])
 
   const loadData = async () => {
     setLoading(true)
@@ -36,7 +38,9 @@ export default function InventoryPage() {
     
     if (biz) {
       setBusiness(biz)
-      const { data: prods } = await supabase.from('products').select('*').eq('business_id', biz.id).order('name')
+      let query = supabase.from('products').select('*').eq('business_id', biz.id).order('name')
+      if (selectedBranchId) query = query.eq('branch_id', selectedBranchId)
+      const { data: prods } = await query
       setProducts(prods || [])
     }
     setLoading(false)
