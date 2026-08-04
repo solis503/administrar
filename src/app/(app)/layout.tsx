@@ -1,6 +1,8 @@
 import { createServerSupabase } from '@/lib/supabase-server'
 import { redirect } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
+import { BranchProvider } from '@/lib/branch-context'
+import BranchSelector from '@/components/BranchSelector'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,9 +51,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         userRole={userRole}
       />
       <main className="flex-1 overflow-y-auto bg-gray-50">
-        <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto">
-          {children}
-        </div>
+        <BranchProvider>
+          <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto">
+            <div className="mb-4">
+              <BranchSelector />
+            </div>
+            {children}
+          </div>
+        </BranchProvider>
       </main>
     </div>
   )
