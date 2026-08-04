@@ -26,7 +26,21 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
+  let user = null
+  try {
+    const { data } = await supabase.auth.getUser()
+    user = data.user
+  } catch (err) {
+    // Token de sesión inválido/corrupto (ej. cookie vieja): tratamos como no logueado
+    // en vez de dejar que esto tumbe la página entera para el usuario, y limpiamos
+    // las cookies de sesión rotas para que no se repita en cada visita.
+    user = null
+    request.cookies.getAll().forEach((cookie) => {
+      if (cookie.name.startsWith('sb-')) {
+        response.cookies.set({ name: cookie.name, value: '', maxAge: 0 })
+      }
+    })
+  }
 
   const protectedPaths = ['/dashboard', '/products', '/pos', '/inventory', '/settings']
   const isProtected = protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))
