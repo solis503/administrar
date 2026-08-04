@@ -12,12 +12,16 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('general')
   const [profiles, setProfiles] = useState<any[]>([])
+  const [branches, setBranches] = useState<any[]>([])
+  const [showBranchModal, setShowBranchModal] = useState(false)
+  const [editingBranch, setEditingBranch] = useState<any>(null)
+  const [branchForm, setBranchForm] = useState({ name: '', address: '', phone: '' })
   const [showEmployeeModal, setShowEmployeeModal] = useState(false)
   const [editingEmployee, setEditingEmployee] = useState<any>(null)
   const [showManualCreate, setShowManualCreate] = useState(false)
   const [manualUserId, setManualUserId] = useState('')
   const [empForm, setEmpForm] = useState({
-    email: '', name: '', password: '', role: 'seller',
+    email: '', name: '', password: '', role: 'seller', branch_id: '',
     permissions: { dashboard: false, pos: true, products: false, inventory: false, reports: false, suppliers: false, clients: true, expenses: false }
   })
   const [saving, setSaving] = useState(false)
@@ -52,9 +56,55 @@ export default function SettingsPage() {
         .order('created_at', { ascending: false })
       
       setProfiles(profs || [])
+
+      const { data: brs } = await supabase
+        .from('branches')
+        .select('*')
+        .eq('business_id', ownerBiz.id)
+        .order('created_at', { ascending: true })
+
+      setBranches(brs || [])
     }
     
     setLoading(false)
+  }
+
+  const openAddBranch = () => {
+    setEditingBranch(null)
+    setBranchForm({ name: '', address: '', phone: '' })
+    setShowBranchModal(true)
+  }
+
+  const openEditBranch = (branch: any) => {
+    setEditingBranch(branch)
+    setBranchForm({ name: branch.name || '', address: branch.address || '', phone: branch.phone || '' })
+    setShowBranchModal(true)
+  }
+
+  const handleSaveBranch = async () => {
+    if (!branchForm.name || !business) {
+      showMessage('❌ El nombre de la sucursal es obligatorio', 'error')
+      return
+    }
+
+    if (editingBranch) {
+      const { error } = await supabase.from('branches').update(branchForm).eq('id', editingBranch.id)
+      if (error) { showMessage('❌ Error: ' + error.message, 'error'); return }
+      showMessage('✅ Sucursal actualizada', 'success')
+    } else {
+      const { error } = await supabase.from('branches').insert({ ...branchForm, business_id: business.id })
+      if (error) { showMessage('❌ Error: ' + error.message, 'error'); return }
+      showMessage('✅ Sucursal creada', 'success')
+    }
+    setShowBranchModal(false)
+    await loadData()
+  }
+
+  const handleToggleBranchActive = async (id: string, active: boolean) => {
+    const { error } = await supabase.from('branches').update({ active }).eq('id', id)
+    if (error) { showMessage('❌ Error: ' + error.message, 'error'); return }
+    showMessage(active ? '✅ Sucursal activada' : '⚠️ Sucursal desactivada', 'success')
+    await loadData()
   }
 
   const handleSave = async () => {
@@ -72,7 +122,7 @@ export default function SettingsPage() {
   const openAddEmployee = () => {
     setEditingEmployee(null)
     setEmpForm({
-      email: '', name: '', password: '', role: 'seller',
+      email: '', name: '', password: '', role: 'seller', branch_id: branches[0]?.id || '',
       permissions: { dashboard: false, pos: true, products: false, inventory: false, reports: false, suppliers: false, clients: true, expenses: false }
     })
     setMessage({ text: '', type: '' })
@@ -87,6 +137,7 @@ export default function SettingsPage() {
       name: emp.full_name || '',
       password: '',
       role: emp.role || 'seller',
+      branch_id: emp.branch_id || '',
       permissions: emp.permissions || { dashboard: false, pos: true, products: false, inventory: false, reports: false, suppliers: false, clients: true, expenses: false }
     })
     setMessage({ text: '', type: '' })
@@ -104,6 +155,11 @@ export default function SettingsPage() {
       return
     }
 
+    if (!editingEmployee && !empForm.branch_id) {
+      showMessage('❌ Tenés que asignar una sucursal al empleado', 'error')
+      return
+    }
+
     setSaving(true)
 
     try {
@@ -114,6 +170,7 @@ export default function SettingsPage() {
           .update({
             full_name: empForm.name,
             role: empForm.role,
+            branch_id: empForm.branch_id || editingEmployee.branch_id,
             permissions: empForm.permissions,
           })
           .eq('id', editingEmployee.id)
@@ -131,6 +188,7 @@ export default function SettingsPage() {
         const { error } = await supabase.from('profiles').insert({
           user_id: manualUserId,
           business_id: business.id,
+          branch_id: empForm.branch_id,
           role: empForm.role,
           full_name: empForm.name,
           email: empForm.email,
@@ -171,6 +229,7 @@ export default function SettingsPage() {
               password: empForm.password,
               full_name: empForm.name,
               role: empForm.role,
+              branch_id: empForm.branch_id,
               permissions: empForm.permissions,
             }),
           })
@@ -236,9 +295,10 @@ export default function SettingsPage() {
   const generateManualSQL = () => {
     if (!business) return ''
     const perms = JSON.stringify(empForm.permissions)
-    return `INSERT INTO profiles (user_id, business_id, role, full_name, email, active, permissions) VALUES (
+    return `INSERT INTO profiles (user_id, business_id, branch_id, role, full_name, email, active, permissions) VALUES (
   '${manualUserId}'::uuid,
   '${business.id}'::uuid,
+  '${empForm.branch_id}'::uuid,
   '${empForm.role}',
   '${empForm.name}',
   '${empForm.email}',
@@ -263,6 +323,7 @@ export default function SettingsPage() {
       
       <div className="flex gap-2 mb-6 flex-wrap">
         <button onClick={() => setTab('general')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'general' ? 'bg-blue-600 text-white' : 'bg-white border'}`}>🏢 General</button>
+        <button onClick={() => setTab('branches')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'branches' ? 'bg-blue-600 text-white' : 'bg-white border'}`}>🏬 Sucursales</button>
         <button onClick={() => setTab('employees')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'employees' ? 'bg-blue-600 text-white' : 'bg-white border'}`}>👥 Empleados</button>
       </div>
 
@@ -290,6 +351,38 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {tab === 'branches' && (
+        <div>
+          <div className="bg-white rounded-2xl shadow-sm border p-6 mb-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-lg font-semibold">🏬 Sucursales</h2>
+              <button onClick={openAddBranch} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-semibold text-sm">+ Agregar Sucursal</button>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+            {branches.map((b) => (
+              <div key={b.id} className="p-4 border-b hover:bg-gray-50 flex items-center gap-4">
+                <div className="w-12 h-12 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-lg">🏬</div>
+                <div className="flex-1">
+                  <p className="font-medium">{b.name}</p>
+                  <p className="text-sm text-gray-500">{b.address || 'Sin dirección'}{b.phone ? ` · ${b.phone}` : ''}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => openEditBranch(b)} className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-semibold hover:bg-blue-200">✏️ Editar</button>
+                  <button onClick={() => handleToggleBranchActive(b.id, !b.active)} className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${b.active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {b.active ? 'Activa' : 'Inactiva'}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {branches.length === 0 && (
+              <div className="p-8 text-center text-gray-400"><p className="text-4xl mb-3">🏬</p><p>No hay sucursales aún</p></div>
+            )}
+          </div>
+        </div>
+      )}
+
       {tab === 'employees' && (
         <div>
           <div className="bg-white rounded-2xl shadow-sm border p-6 mb-6">
@@ -312,7 +405,9 @@ export default function SettingsPage() {
                     <div className="flex-1">
                       <p className="font-medium">{emp.full_name || 'Sin nombre'}</p>
                       <p className="text-sm text-gray-500">{emp.email}</p>
-                      <p className="text-xs text-gray-400 mt-1"><strong>Permisos:</strong> {allowedModules || 'Sin permisos'}</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        🏬 {branches.find((b) => b.id === emp.branch_id)?.name || 'Sin sucursal'} · <strong>Permisos:</strong> {allowedModules || 'Sin permisos'}
+                      </p>
                     </div>
                     <span className={`px-3 py-1 rounded-full text-sm font-semibold ${emp.role === 'manager' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
                       {emp.role === 'manager' ? 'Gerente' : 'Vendedor'}
@@ -366,6 +461,21 @@ export default function SettingsPage() {
               )}
 
               <div>
+                <label className="text-sm font-medium block mb-2">Sucursal *</label>
+                <select
+                  value={empForm.branch_id}
+                  onChange={(e) => setEmpForm({ ...empForm, branch_id: e.target.value })}
+                  className="w-full px-4 py-3 rounded-xl border outline-none"
+                >
+                  <option value="">-- Elegí una sucursal --</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">El empleado solo va a ver productos, inventario y ventas de esta sucursal.</p>
+              </div>
+
+              <div>
                 <label className="text-sm font-medium block mb-2">Rol</label>
                 <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => applyRolePermissions('manager')} className={`p-3 rounded-xl border-2 text-left ${empForm.role === 'manager' ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}>
@@ -404,6 +514,31 @@ export default function SettingsPage() {
                 {saving ? 'Guardando...' : (editingEmployee ? '💾 Guardar' : '✅ Crear')}
               </button>
               <button onClick={() => { setShowEmployeeModal(false); setShowManualCreate(false); setManualUserId('') }} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showBranchModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6">
+            <h2 className="text-xl font-bold mb-4">{editingBranch ? '✏️ Editar Sucursal' : '🏬 Nueva Sucursal'}</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium block mb-2">Nombre *</label>
+                <input value={branchForm.name} onChange={(e) => setBranchForm({ ...branchForm, name: e.target.value })} className="w-full px-4 py-3 rounded-xl border outline-none" placeholder="Ej: Sucursal Centro" />
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-2">Dirección</label>
+                <input value={branchForm.address} onChange={(e) => setBranchForm({ ...branchForm, address: e.target.value })} className="w-full px-4 py-3 rounded-xl border outline-none" placeholder="Opcional" />
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-2">Teléfono</label>
+                <input value={branchForm.phone} onChange={(e) => setBranchForm({ ...branchForm, phone: e.target.value })} className="w-full px-4 py-3 rounded-xl border outline-none" placeholder="Opcional" />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={handleSaveBranch} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl">💾 Guardar</button>
+              <button onClick={() => setShowBranchModal(false)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Cancelar</button>
             </div>
           </div>
         </div>
