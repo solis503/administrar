@@ -4,10 +4,13 @@ import { createServerSupabase } from '@/lib/supabase-server'
 
 export async function POST(req: Request) {
   try {
-    const { email, password, full_name, role, permissions } = await req.json()
+    const { email, password, full_name, role, branch_id, permissions } = await req.json()
 
     if (!email || !password || !full_name) {
       return NextResponse.json({ error: 'Faltan datos obligatorios' }, { status: 400 })
+    }
+    if (!branch_id) {
+      return NextResponse.json({ error: 'Tenés que asignar una sucursal al empleado' }, { status: 400 })
     }
     if (password.length < 6) {
       return NextResponse.json({ error: 'La contraseña debe tener al menos 6 caracteres' }, { status: 400 })
@@ -28,6 +31,18 @@ export async function POST(req: Request) {
 
     if (bizError || !business) {
       return NextResponse.json({ error: 'No se encontró un negocio para este usuario' }, { status: 403 })
+    }
+
+    // Verificar que la sucursal indicada de verdad pertenezca a este negocio
+    const { data: branch, error: branchError } = await supabase
+      .from('branches')
+      .select('id')
+      .eq('id', branch_id)
+      .eq('business_id', business.id)
+      .single()
+
+    if (branchError || !branch) {
+      return NextResponse.json({ error: 'La sucursal indicada no es válida' }, { status: 400 })
     }
 
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -75,6 +90,7 @@ export async function POST(req: Request) {
     const { error: profileError } = await supabaseAdmin.from('profiles').insert({
       user_id: authData.user.id,
       business_id: business.id,
+      branch_id,
       role,
       full_name,
       email,
