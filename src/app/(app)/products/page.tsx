@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import * as XLSX from 'xlsx'
+import { useBranch } from '@/lib/branch-context'
 
 const FIELD_LABELS: Record<string, string> = {
   name: 'Nombre del producto (obligatorio)',
@@ -77,10 +78,11 @@ export default function ProductsPage() {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<{ success: number; skipped: string[] }>({ success: 0, skipped: [] })
   const supabase = createClient()
+  const { selectedBranchId, branches, canSwitchBranches } = useBranch()
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [selectedBranchId])
 
   const loadData = async () => {
     setLoading(true)
@@ -103,7 +105,9 @@ export default function ProductsPage() {
     
     if (biz) {
       setBusiness(biz)
-      const { data: prods } = await supabase.from('products').select('*').eq('business_id', biz.id).order('name')
+      let query = supabase.from('products').select('*').eq('business_id', biz.id).order('name')
+      if (selectedBranchId) query = query.eq('branch_id', selectedBranchId)
+      const { data: prods } = await query
       setProducts(prods || [])
     }
     setLoading(false)
@@ -183,6 +187,15 @@ export default function ProductsPage() {
   const handleSave = async () => {
     if (!form.name || !business) return
 
+    const targetBranchId = editing
+      ? editing.branch_id
+      : (selectedBranchId || (branches.length === 1 ? branches[0].id : null))
+
+    if (!targetBranchId) {
+      alert('Elegí una sucursal específica arriba (no "Todas las sucursales") antes de crear un producto')
+      return
+    }
+
     setUploadingImage(true)
     let imageUrl = form.image_url
     if (imageFile) {
@@ -193,6 +206,7 @@ export default function ProductsPage() {
 
     const productData = {
       business_id: business.id,
+      branch_id: targetBranchId,
       name: form.name,
       price: parseFloat(form.price) || 0,
       cost: parseFloat(form.cost) || 0,
@@ -352,6 +366,11 @@ export default function ProductsPage() {
       alert('Tenés que indicar cuál columna es el nombre del producto')
       return
     }
+    const targetBranchId = selectedBranchId || (branches.length === 1 ? branches[0].id : null)
+    if (!targetBranchId) {
+      alert('Elegí una sucursal específica arriba (no "Todas las sucursales") antes de importar')
+      return
+    }
 
     setImporting(true)
     const skipped: string[] = []
@@ -365,6 +384,7 @@ export default function ProductsPage() {
       }
       toInsert.push({
         business_id: business.id,
+        branch_id: targetBranchId,
         name,
         price: columnMapping.price ? parseNumber(row[columnMapping.price]) : 0,
         cost: columnMapping.cost ? parseNumber(row[columnMapping.cost]) : 0,
@@ -398,15 +418,21 @@ export default function ProductsPage() {
       alert('Tenés que indicar cuál columna es la receta y cuál es el ingrediente')
       return
     }
+    const targetBranchId = selectedBranchId || (branches.length === 1 ? branches[0].id : null)
+    if (!targetBranchId) {
+      alert('Elegí una sucursal específica arriba (no "Todas las sucursales") antes de importar')
+      return
+    }
 
     setImporting(true)
     const skipped: string[] = []
 
-    // 1. Cargar todos los productos existentes del negocio, para buscar ingredientes por nombre
+    // 1. Cargar los productos existentes de esa sucursal, para buscar ingredientes por nombre
     const { data: existingProducts } = await supabase
       .from('products')
       .select('id, name, product_type')
       .eq('business_id', business.id)
+      .eq('branch_id', targetBranchId)
     const productByName = new Map<string, any>(
       (existingProducts || []).map((p) => [p.name.trim().toLowerCase(), p])
     )
@@ -437,6 +463,7 @@ export default function ProductsPage() {
           .from('products')
           .insert({
             business_id: business.id,
+            branch_id: targetBranchId,
             name: recipeName,
             price,
             stock: 0,
