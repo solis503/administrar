@@ -39,7 +39,7 @@ export default function POSPage() {
       if (existing.qty >= product.stock) return
       setCart(cart.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i))
     } else {
-      setCart([...cart, { id: product.id, name: product.name, price: product.price, qty: 1 }])
+      setCart([...cart, { id: product.id, name: product.name, price: product.price, qty: 1, image_url: product.image_url }])
     }
   }
 
@@ -133,9 +133,16 @@ export default function POSPage() {
         <div className="flex-1 overflow-y-auto">
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
             {filtered.map(p => (
-              <button key={p.id} onClick={() => addToCart(p)} className="bg-white rounded-xl p-4 border hover:border-primary-300 hover:shadow-md transition text-left">
+              <button key={p.id} onClick={() => addToCart(p)} className="bg-white rounded-xl p-3 border hover:border-primary-300 hover:shadow-md transition text-left flex flex-col">
+                <div className="w-full aspect-square rounded-lg bg-gray-100 mb-2 overflow-hidden flex items-center justify-center">
+                  {p.image_url ? (
+                    <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-3xl text-gray-300">{p.product_type === 'receta' ? '🍽️' : '📦'}</span>
+                  )}
+                </div>
                 <p className="font-medium text-sm truncate">{p.name}</p>
-                {p.product_type === 'receta' && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">🍽️</span>}
+                {p.product_type === 'receta' && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full w-fit">🍽️</span>}
                 <p className="text-primary-600 font-bold mt-1">{curr}{p.price.toFixed(2)}</p>
                 <p className="text-xs text-gray-400">Stock: {p.stock} {p.unit}</p>
               </button>
@@ -149,6 +156,9 @@ export default function POSPage() {
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {cart.length === 0 ? <p className="text-center text-gray-400 py-8">Agrega productos</p> : cart.map(item => (
             <div key={item.id} className="flex items-center gap-2 bg-gray-50 rounded-xl p-2">
+              <div className="w-9 h-9 rounded-lg bg-gray-200 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                {item.image_url ? <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" /> : <span className="text-gray-400 text-xs">📦</span>}
+              </div>
               <div className="flex-1 min-w-0"><p className="font-medium text-sm truncate">{item.name}</p><p className="text-xs text-gray-500">{curr}{item.price.toFixed(2)}</p></div>
               <div className="flex items-center gap-1">
                 <button onClick={() => updateQty(item.id, -1)} className="w-7 h-7 rounded bg-white border">-</button>
