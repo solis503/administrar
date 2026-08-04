@@ -19,26 +19,10 @@ const AUTO_DETECT_HINTS: Record<string, string[]> = {
   unit: ['unidad', 'unit'],
 }
 
-const RECIPE_FIELD_LABELS: Record<string, string> = {
-  recipe: 'Nombre de la receta (obligatorio)',
-  price: 'Precio de venta',
-  ingredient: 'Ingrediente (obligatorio)',
-  quantity: 'Cantidad del ingrediente',
-  unit: 'Unidad',
-}
-
-const RECIPE_AUTO_DETECT_HINTS: Record<string, string[]> = {
-  recipe: ['receta', 'recipe', 'plato', 'combo'],
-  price: ['precio', 'price', 'pvp', 'venta'],
-  ingredient: ['ingrediente', 'ingredient', 'insumo'],
-  quantity: ['cantidad', 'cant', 'quantity'],
-  unit: ['unidad', 'unit'],
-}
-
-// Busca la fila que más se parece a encabezados de tabla (nombre/precio/receta/ingrediente/etc.),
+// Busca la fila que más se parece a encabezados de tabla (nombre/precio/costo/etc.),
 // para saltar filas de reportes/metadatos que a veces vienen arriba del archivo real.
 const findHeaderRowIndex = (aoa: any[][]): number => {
-  const allHints = [...Object.values(AUTO_DETECT_HINTS).flat(), ...Object.values(RECIPE_AUTO_DETECT_HINTS).flat()]
+  const allHints = Object.values(AUTO_DETECT_HINTS).flat()
   let bestRow = 0
   let bestScore = 0
   const maxScan = Math.min(aoa.length, 25)
@@ -66,7 +50,6 @@ export default function ProductsPage() {
   const [recipeItems, setRecipeItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [showImportModal, setShowImportModal] = useState(false)
-  const [importMode, setImportMode] = useState<'products' | 'recipes'>('products')
   const [importStep, setImportStep] = useState('upload') // upload | map | result
   const [importHeaders, setImportHeaders] = useState<string[]>([])
   const [importRows, setImportRows] = useState<any[]>([])
@@ -210,8 +193,7 @@ export default function ProductsPage() {
     setRecipeItems(newItems)
   }
 
-  const openImportModal = (mode: 'products' | 'recipes') => {
-    setImportMode(mode)
+  const openImportModal = () => {
     setImportStep('upload')
     setImportHeaders([])
     setImportRows([])
@@ -270,11 +252,10 @@ export default function ProductsPage() {
         setImportRows(rows)
 
         // Auto-detectar columnas como sugerencia (el usuario confirma/corrige después)
-        const hints = importMode === 'recipes' ? RECIPE_AUTO_DETECT_HINTS : AUTO_DETECT_HINTS
         const mapping: Record<string, string> = {}
-        for (const field of Object.keys(hints)) {
+        for (const field of Object.keys(AUTO_DETECT_HINTS)) {
           const match = headers.find((h) =>
-            hints[field].some((hint) => h.toLowerCase().trim().includes(hint))
+            AUTO_DETECT_HINTS[field].some((hint) => h.toLowerCase().trim().includes(hint))
           )
           if (match) mapping[field] = match
         }
@@ -289,14 +270,6 @@ export default function ProductsPage() {
   }
 
   const handleConfirmImport = async () => {
-    if (importMode === 'recipes') {
-      await handleConfirmRecipeImport()
-    } else {
-      await handleConfirmProductImport()
-    }
-  }
-
-  const handleConfirmProductImport = async () => {
     if (!business || !importRows.length) return
     if (!columnMapping.name) {
       alert('Tenés que indicar cuál columna es el nombre del producto')
@@ -342,113 +315,6 @@ export default function ProductsPage() {
     await loadData()
   }
 
-  const handleConfirmRecipeImport = async () => {
-    if (!business || !importRows.length) return
-    if (!columnMapping.recipe || !columnMapping.ingredient) {
-      alert('Tenés que indicar cuál columna es la receta y cuál es el ingrediente')
-      return
-    }
-
-    setImporting(true)
-    const skipped: string[] = []
-
-    // 1. Cargar todos los productos existentes del negocio, para buscar ingredientes por nombre
-    const { data: existingProducts } = await supabase
-      .from('products')
-      .select('id, name, product_type')
-      .eq('business_id', business.id)
-    const productByName = new Map<string, any>(
-      (existingProducts || []).map((p) => [p.name.trim().toLowerCase(), p])
-    )
-
-    // 2. Agrupar las filas por nombre de receta
-    const groups = new Map<string, any[]>()
-    importRows.forEach((row) => {
-      const recipeName = String(row[columnMapping.recipe] ?? '').trim()
-      if (!recipeName) return
-      if (!groups.has(recipeName)) groups.set(recipeName, [])
-      groups.get(recipeName)!.push(row)
-    })
-
-    let successCount = 0
-
-    for (const [recipeName, rows] of Array.from(groups.entries())) {
-      // Buscar o crear el producto de tipo "receta"
-      let recipeProduct = productByName.get(recipeName.toLowerCase())
-      const price = columnMapping.price ? parseNumber(rows[0][columnMapping.price]) : 0
-
-      if (recipeProduct && recipeProduct.product_type !== 'receta') {
-        skipped.push(`${recipeName}: ya existe como producto simple, no se puede convertir en receta`)
-        continue
-      }
-
-      if (!recipeProduct) {
-        const { data: created, error } = await supabase
-          .from('products')
-          .insert({
-            business_id: business.id,
-            name: recipeName,
-            price,
-            stock: 0,
-            unit: 'piezas',
-            product_type: 'receta',
-          })
-          .select()
-          .single()
-        if (error || !created) {
-          skipped.push(`${recipeName}: no se pudo crear (${error?.message})`)
-          continue
-        }
-        recipeProduct = created
-        productByName.set(recipeName.toLowerCase(), created)
-      } else {
-        // Ya existía la receta: actualizamos el precio y limpiamos sus ingredientes viejos
-        await supabase.from('products').update({ price }).eq('id', recipeProduct.id)
-        await supabase.from('recipe_items').delete().eq('product_id', recipeProduct.id)
-      }
-
-      // Insertar cada ingrediente de la receta
-      const itemsToInsert: any[] = []
-      for (const row of rows) {
-        const ingredientName = String(row[columnMapping.ingredient] ?? '').trim()
-        if (!ingredientName) continue
-
-        const ingredientProduct = productByName.get(ingredientName.toLowerCase())
-        if (!ingredientProduct) {
-          skipped.push(`${recipeName}: ingrediente "${ingredientName}" no existe en tu inventario, importalo primero como producto`)
-          continue
-        }
-        if (ingredientProduct.id === recipeProduct.id) {
-          skipped.push(`${recipeName}: no puede ser ingrediente de sí misma`)
-          continue
-        }
-
-        itemsToInsert.push({
-          product_id: recipeProduct.id,
-          ingredient_id: ingredientProduct.id,
-          quantity: columnMapping.quantity ? parseNumber(row[columnMapping.quantity]) || 1 : 1,
-          unit: columnMapping.unit ? String(row[columnMapping.unit] || '').trim() : null,
-        })
-      }
-
-      if (itemsToInsert.length > 0) {
-        const { error } = await supabase.from('recipe_items').insert(itemsToInsert)
-        if (error) {
-          skipped.push(`${recipeName}: error guardando ingredientes (${error.message})`)
-        } else {
-          successCount++
-        }
-      } else {
-        skipped.push(`${recipeName}: no se le pudo agregar ningún ingrediente válido`)
-      }
-    }
-
-    setImportResult({ success: successCount, skipped })
-    setImportStep('result')
-    setImporting(false)
-    await loadData()
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -459,18 +325,14 @@ export default function ProductsPage() {
 
   const ingredients = products.filter(p => p.product_type !== 'receta')
   const recipes = products.filter(p => p.product_type === 'receta')
-  const activeFields = importMode === 'recipes' ? RECIPE_FIELD_LABELS : FIELD_LABELS
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">📦 Productos</h1>
         <div className="flex gap-2">
-          <button onClick={() => openImportModal('products')} className="bg-gray-100 text-gray-700 px-3 py-2 rounded-xl text-sm font-semibold border">
-            📥 Importar Productos
-          </button>
-          <button onClick={() => openImportModal('recipes')} className="bg-gray-100 text-gray-700 px-3 py-2 rounded-xl text-sm font-semibold border">
-            🍽️ Importar Recetas
+          <button onClick={openImportModal} className="bg-gray-100 text-gray-700 px-3 py-2 rounded-xl text-sm font-semibold border">
+            📥 Importar Excel
           </button>
           <button onClick={() => openCreate('simple')} className="bg-blue-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
             + Producto
@@ -684,9 +546,7 @@ export default function ProductsPage() {
       {showImportModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-bold mb-4">
-              {importMode === 'recipes' ? '🍽️ Importar Recetas desde Excel' : '📥 Importar Productos desde Excel'}
-            </h2>
+            <h2 className="text-xl font-bold mb-4">📥 Importar Productos desde Excel</h2>
 
             {importStep === 'upload' && (
               <div>
@@ -708,9 +568,9 @@ export default function ProductsPage() {
                   Se encontraron <strong>{importRows.length}</strong> filas. Confirmá qué columna de tu archivo corresponde a cada campo (tratamos de adivinar, pero revisalo antes de continuar):
                 </p>
                 <div className="space-y-3 mb-4">
-                  {Object.keys(activeFields).map((field) => (
+                  {Object.keys(FIELD_LABELS).map((field) => (
                     <div key={field} className="flex items-center gap-3">
-                      <label className="text-sm font-medium w-56">{activeFields[field]}</label>
+                      <label className="text-sm font-medium w-56">{FIELD_LABELS[field]}</label>
                       <select
                         value={columnMapping[field] || ''}
                         onChange={(e) => setColumnMapping({ ...columnMapping, [field]: e.target.value })}
@@ -729,9 +589,9 @@ export default function ProductsPage() {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b">
                       <tr>
-                        {Object.keys(activeFields).map((field) => (
+                        {Object.keys(FIELD_LABELS).map((field) => (
                           <th key={field} className="text-left px-3 py-2 text-xs font-semibold text-gray-500">
-                            {activeFields[field].split(' (')[0]}
+                            {FIELD_LABELS[field].split(' (')[0]}
                           </th>
                         ))}
                       </tr>
@@ -739,7 +599,7 @@ export default function ProductsPage() {
                     <tbody className="divide-y">
                       {importRows.slice(0, 5).map((row, i) => (
                         <tr key={i}>
-                          {Object.keys(activeFields).map((field) => (
+                          {Object.keys(FIELD_LABELS).map((field) => (
                             <td key={field} className="px-3 py-2">
                               {columnMapping[field] ? String(row[columnMapping[field]] ?? '') : <span className="text-gray-300">—</span>}
                             </td>
@@ -769,9 +629,7 @@ export default function ProductsPage() {
             {importStep === 'result' && (
               <div>
                 <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-4">
-                  <p className="font-semibold text-green-700">
-                    ✅ {importResult.success} {importMode === 'recipes' ? 'recetas importadas' : 'productos importados'} correctamente
-                  </p>
+                  <p className="font-semibold text-green-700">✅ {importResult.success} productos importados correctamente</p>
                 </div>
                 {importResult.skipped.length > 0 && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-4 max-h-48 overflow-y-auto">
