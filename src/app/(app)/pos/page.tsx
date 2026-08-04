@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
+import { useBranch } from '@/lib/branch-context'
 
 export default function POSPage() {
   const [products, setProducts] = useState<any[]>([])
@@ -14,8 +15,9 @@ export default function POSPage() {
   const [business, setBusiness] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
+  const { selectedBranchId, branches, canSwitchBranches } = useBranch()
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => { loadData() }, [selectedBranchId])
 
   const loadData = async () => {
     setLoading(true)
@@ -27,8 +29,12 @@ export default function POSPage() {
     else { const { data: pr } = await supabase.from('profiles').select('*, businesses(*)').eq('user_id', user.id).single(); if (pr) biz = pr.businesses }
     if (biz) {
       setBusiness(biz)
-      const { data } = await supabase.from('products').select('*').eq('business_id', biz.id).eq('is_sellable', true).gt('stock', 0)
-      setProducts(data || [])
+      if (selectedBranchId) {
+        const { data } = await supabase.from('products').select('*').eq('business_id', biz.id).eq('branch_id', selectedBranchId).eq('is_sellable', true).gt('stock', 0)
+        setProducts(data || [])
+      } else {
+        setProducts([])
+      }
     }
     setLoading(false)
   }
@@ -67,7 +73,7 @@ export default function POSPage() {
   }
 
   const completeSale = async () => {
-    if (!business) return
+    if (!business || !selectedBranchId) return
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
@@ -76,6 +82,7 @@ export default function POSPage() {
 
     const { data: sale } = await supabase.from('sales').insert({
       business_id: business.id,
+      branch_id: selectedBranchId,
       user_id: user.id,
       total: total,
       tax_amount: tax,
@@ -124,6 +131,16 @@ export default function POSPage() {
   const filtered = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode?.includes(search))
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
+
+  if (!selectedBranchId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 text-center">
+        <p className="text-4xl mb-3">🏬</p>
+        <p className="font-semibold text-gray-700">Elegí una sucursal específica arriba para empezar a cobrar</p>
+        <p className="text-sm text-gray-400 mt-1">No se puede vender desde "Todas las sucursales" a la vez</p>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col lg:flex-row gap-4" style={{ minHeight: 'calc(100vh - 6rem)' }}>
