@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
+import { useBranch } from '@/lib/branch-context'
 
 export default function ExpensesPage() {
   const [expenses, setExpenses] = useState<any[]>([])
@@ -10,8 +11,9 @@ export default function ExpensesPage() {
   const [form, setForm] = useState({ concept: '', amount: '', category: 'Otros', notes: '' })
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
+  const { selectedBranchId, branches } = useBranch()
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => { loadData() }, [selectedBranchId])
 
   const loadData = async () => {
     setLoading(true)
@@ -23,10 +25,13 @@ export default function ExpensesPage() {
     else { const { data: pr } = await supabase.from('profiles').select('*, businesses(*)').eq('user_id', user.id).single(); if (pr) biz = pr.businesses }
     if (biz) {
       setBusiness(biz)
-      const [exp, sal] = await Promise.all([
-        supabase.from('expenses').select('*').eq('business_id', biz.id).order('created_at', { ascending: false }),
-        supabase.from('sales').select('total').eq('business_id', biz.id),
-      ])
+      let expQuery = supabase.from('expenses').select('*').eq('business_id', biz.id).order('created_at', { ascending: false })
+      let salQuery = supabase.from('sales').select('total').eq('business_id', biz.id)
+      if (selectedBranchId) {
+        expQuery = expQuery.eq('branch_id', selectedBranchId)
+        salQuery = salQuery.eq('branch_id', selectedBranchId)
+      }
+      const [exp, sal] = await Promise.all([expQuery, salQuery])
       setExpenses(exp.data || [])
       setSales(sal.data || [])
     }
@@ -35,7 +40,12 @@ export default function ExpensesPage() {
 
   const handleSave = async () => {
     if (!form.concept || !form.amount || !business) return
-    await supabase.from('expenses').insert({ ...form, amount: parseFloat(form.amount), business_id: business.id })
+    const targetBranchId = selectedBranchId || (branches.length === 1 ? branches[0].id : null)
+    if (!targetBranchId) {
+      alert('Elegí una sucursal específica arriba (no "Todas las sucursales") antes de registrar un gasto')
+      return
+    }
+    await supabase.from('expenses').insert({ ...form, amount: parseFloat(form.amount), business_id: business.id, branch_id: targetBranchId })
     setForm({ concept: '', amount: '', category: 'Otros', notes: '' })
     setShowForm(false)
     loadData()
