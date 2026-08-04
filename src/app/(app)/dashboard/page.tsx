@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-client'
+import { useBranch } from '@/lib/branch-context'
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
@@ -10,8 +11,9 @@ export default function DashboardPage() {
   const [lowStock, setLowStock] = useState<any[]>([])
   const [recentSales, setRecentSales] = useState<any[]>([])
   const supabase = createClient()
+  const { selectedBranchId, branches, canSwitchBranches } = useBranch()
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => { loadData() }, [selectedBranchId])
 
   const loadData = async () => {
     setLoading(true)
@@ -41,11 +43,20 @@ export default function DashboardPage() {
     const now = new Date()
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
 
+    let salesQuery = supabase.from('sales').select('*').eq('business_id', biz.id).gte('created_at', startOfDay)
+    let expensesQuery = supabase.from('expenses').select('*').eq('business_id', biz.id).gte('created_at', startOfDay)
+    let productsQuery = supabase.from('products').select('id, name, stock, min_stock, unit').eq('business_id', biz.id)
+    let recentSalesQuery = supabase.from('sales').select('*').eq('business_id', biz.id).order('created_at', { ascending: false }).limit(5)
+
+    if (selectedBranchId) {
+      salesQuery = salesQuery.eq('branch_id', selectedBranchId)
+      expensesQuery = expensesQuery.eq('branch_id', selectedBranchId)
+      productsQuery = productsQuery.eq('branch_id', selectedBranchId)
+      recentSalesQuery = recentSalesQuery.eq('branch_id', selectedBranchId)
+    }
+
     const [salesRes, expensesRes, productsRes, recentSalesRes] = await Promise.all([
-      supabase.from('sales').select('*').eq('business_id', biz.id).gte('created_at', startOfDay),
-      supabase.from('expenses').select('*').eq('business_id', biz.id).gte('created_at', startOfDay),
-      supabase.from('products').select('id, name, stock, min_stock, unit').eq('business_id', biz.id),
-      supabase.from('sales').select('*').eq('business_id', biz.id).order('created_at', { ascending: false }).limit(5),
+      salesQuery, expensesQuery, productsQuery, recentSalesQuery,
     ])
 
     setSalesToday(salesRes.data || [])
@@ -67,6 +78,14 @@ export default function DashboardPage() {
   const totalVentasHoy = salesToday.reduce((sum, s) => sum + Number(s.total || 0), 0)
   const totalGastosHoy = expensesToday.reduce((sum, e) => sum + Number(e.amount || 0), 0)
   const ganancia = totalVentasHoy - totalGastosHoy
+
+  // Cuando el dueño está viendo "Todas las sucursales", armamos el desglose por sucursal
+  const showBranchBreakdown = canSwitchBranches && !selectedBranchId && branches.length > 1
+  const branchBreakdown = branches.map((b) => {
+    const ventas = salesToday.filter((s) => s.branch_id === b.id).reduce((sum, s) => sum + Number(s.total || 0), 0)
+    const gastos = expensesToday.filter((e) => e.branch_id === b.id).reduce((sum, e) => sum + Number(e.amount || 0), 0)
+    return { id: b.id, name: b.name, ventas, gastos, ganancia: ventas - gastos }
+  })
 
   if (loading) {
     return (
@@ -101,6 +120,24 @@ export default function DashboardPage() {
           <p className="text-3xl font-bold text-amber-600">{lowStock.length}</p>
         </div>
       </div>
+
+      {showBranchBreakdown && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 mb-6">
+          <div className="p-4 border-b"><h2 className="font-semibold">🏬 Desglose de Hoy por Sucursal</h2></div>
+          <div className="divide-y">
+            {branchBreakdown.map((b) => (
+              <div key={b.id} className="p-4 flex flex-wrap items-center justify-between gap-2">
+                <span className="font-medium text-sm">{b.name}</span>
+                <div className="flex gap-4 text-sm">
+                  <span className="text-blue-600 font-semibold">Ventas: {currency}{b.ventas.toFixed(2)}</span>
+                  <span className="text-red-500 font-semibold">Gastos: {currency}{b.gastos.toFixed(2)}</span>
+                  <span className={`font-semibold ${b.ganancia >= 0 ? 'text-green-600' : 'text-red-600'}`}>Ganancia: {currency}{b.ganancia.toFixed(2)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
