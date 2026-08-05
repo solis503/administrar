@@ -4,7 +4,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-client'
 import { useState, useEffect } from 'react'
 
-export default function Sidebar({ userName, businessName, userRole }: { userName: string; businessName: string; userRole: string }) {
+export default function Sidebar({ userName, businessName, userRole, isPlatformAdmin = false }: { userName: string; businessName: string; userRole: string; isPlatformAdmin?: boolean }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -78,6 +78,8 @@ export default function Sidebar({ userName, businessName, userRole }: { userName
     permissions.clients && { href: '/clients', label: 'Clientes', icon: '👥' },
     permissions.expenses && { href: '/expenses', label: 'Gastos', icon: '💸' },
     permissions.settings && { href: '/settings', label: 'Configuración', icon: '⚙️' },
+    userRole === 'owner' && { href: '/subscription', label: 'Suscripción', icon: '💳' },
+    isPlatformAdmin && { href: '/admin/subscriptions', label: 'Admin Suscripciones', icon: '🛠️' },
   ].filter(Boolean) as { href: string; label: string; icon: string }[]
 
   const roleBadge: any = { 
