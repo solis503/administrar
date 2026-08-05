@@ -2,12 +2,16 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import { useBranch } from '@/lib/branch-context'
+import { getProductCostMap, calculateCOGS } from '@/lib/cogs'
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [business, setBusiness] = useState<any>(null)
   const [salesToday, setSalesToday] = useState<any[]>([])
   const [expensesToday, setExpensesToday] = useState<any[]>([])
+  const [saleItemsToday, setSaleItemsToday] = useState<any[]>([])
+  const [cogsToday, setCogsToday] = useState(0)
+  const [costMap, setCostMap] = useState<Record<string, number>>({})
   const [lowStock, setLowStock] = useState<any[]>([])
   const [recentSales, setRecentSales] = useState<any[]>([])
   const supabase = createClient()
@@ -63,6 +67,20 @@ export default function DashboardPage() {
     setExpensesToday(expensesRes.data || [])
     setRecentSales(recentSalesRes.data || [])
 
+    const todaySaleIds = (salesRes.data || []).map((s: any) => s.id)
+    let items: any[] = []
+    if (todaySaleIds.length > 0) {
+      const { data: itemsData } = await supabase
+        .from('sale_items')
+        .select('sale_id, product_id, quantity')
+        .in('sale_id', todaySaleIds)
+      items = itemsData || []
+    }
+    setSaleItemsToday(items)
+    const costMapResult = await getProductCostMap(supabase, biz.id)
+    setCostMap(costMapResult)
+    setCogsToday(calculateCOGS(items, costMapResult))
+
     const allProducts = productsRes.data || []
     setLowStock(
       allProducts
@@ -77,14 +95,18 @@ export default function DashboardPage() {
   const currency = business?.currency_symbol || '$'
   const totalVentasHoy = salesToday.reduce((sum, s) => sum + Number(s.total || 0), 0)
   const totalGastosHoy = expensesToday.reduce((sum, e) => sum + Number(e.amount || 0), 0)
-  const ganancia = totalVentasHoy - totalGastosHoy
+  const ganancia = totalVentasHoy - cogsToday - totalGastosHoy
 
   // Cuando el dueño está viendo "Todas las sucursales", armamos el desglose por sucursal
   const showBranchBreakdown = canSwitchBranches && !selectedBranchId && branches.length > 1
+  const saleBranchMap: Record<string, string> = {}
+  salesToday.forEach((s) => { saleBranchMap[s.id] = s.branch_id })
   const branchBreakdown = branches.map((b) => {
     const ventas = salesToday.filter((s) => s.branch_id === b.id).reduce((sum, s) => sum + Number(s.total || 0), 0)
     const gastos = expensesToday.filter((e) => e.branch_id === b.id).reduce((sum, e) => sum + Number(e.amount || 0), 0)
-    return { id: b.id, name: b.name, ventas, gastos, ganancia: ventas - gastos }
+    const itemsDeSucursal = saleItemsToday.filter((it) => saleBranchMap[it.sale_id] === b.id)
+    const costoProductos = calculateCOGS(itemsDeSucursal, costMap)
+    return { id: b.id, name: b.name, ventas, gastos, ganancia: ventas - costoProductos - gastos }
   })
 
   if (loading) {
@@ -99,11 +121,15 @@ export default function DashboardPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">📊 Dashboard</h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
           <p className="text-xs text-gray-500 mb-1">Ventas de Hoy</p>
           <p className="text-3xl font-bold text-blue-600">{currency}{totalVentasHoy.toFixed(2)}</p>
           <p className="text-xs text-gray-400 mt-1">{salesToday.length} transacciones</p>
+        </div>
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+          <p className="text-xs text-gray-500 mb-1">Costo de Productos</p>
+          <p className="text-3xl font-bold text-orange-500">{currency}{cogsToday.toFixed(2)}</p>
         </div>
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
           <p className="text-xs text-gray-500 mb-1">Gastos de Hoy</p>
