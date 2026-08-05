@@ -42,7 +42,7 @@ export async function middleware(request: NextRequest) {
     })
   }
 
-  const protectedPaths = ['/dashboard', '/products', '/pos', '/inventory', '/settings']
+  const protectedPaths = ['/dashboard', '/products', '/pos', '/inventory', '/settings', '/subscription', '/admin']
   const isProtected = protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))
   const authPaths = ['/login', '/register']
   const isAuthPage = authPaths.some(path => request.nextUrl.pathname.startsWith(path))
