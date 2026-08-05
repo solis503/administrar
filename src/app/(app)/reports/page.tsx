@@ -1,22 +1,49 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
+import { useBranch } from '@/lib/branch-context'
+import { getProductCostMap, calculateCOGS } from '@/lib/cogs'
+
+type Period = 'today' | 'week' | 'month' | 'custom'
 
 export default function ReportsPage() {
-  const [period, setPeriod] = useState<'today' | 'week' | 'month'>('week')
+  const [period, setPeriod] = useState<Period>('week')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
   const [sales, setSales] = useState<any[]>([])
   const [expenses, setExpenses] = useState<any[]>([])
-  const [products, setProducts] = useState<any[]>([])
+  const [saleItems, setSaleItems] = useState<any[]>([])
+  const [cogs, setCogs] = useState(0)
   const [business, setBusiness] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
+  const { selectedBranchId } = useBranch()
 
-  useEffect(() => { loadData() }, [period])
+  useEffect(() => { loadData() }, [period, customFrom, customTo, selectedBranchId])
+
+  const getDateRange = () => {
+    const now = new Date()
+    let since: Date
+    let until: Date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+
+    if (period === 'today') {
+      since = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    } else if (period === 'week') {
+      since = new Date(now.getTime() - 7 * 86400000)
+    } else if (period === 'month') {
+      since = new Date(now.getFullYear(), now.getMonth(), 1)
+    } else {
+      // Personalizado: si no se eligió nada todavía, usamos hoy como default
+      since = customFrom ? new Date(customFrom + 'T00:00:00') : new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      until = customTo ? new Date(customTo + 'T23:59:59.999') : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+    }
+    return { since, until }
+  }
 
   const loadData = async () => {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    if (!user) { setLoading(false); return }
     let biz: any = null
     const { data: ob } = await supabase.from('businesses').select('*').eq('owner_id', user.id).single()
     if (ob) biz = ob
@@ -24,33 +51,53 @@ export default function ReportsPage() {
     if (!biz) { setLoading(false); return }
     setBusiness(biz)
 
-    const now = new Date()
-    let since = new Date()
-    if (period === 'today') since = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    else if (period === 'week') since = new Date(now.getTime() - 7 * 86400000)
-    else since = new Date(now.getFullYear(), now.getMonth(), 1)
+    const { since, until } = getDateRange()
 
-    const [s, e, items] = await Promise.all([
-      supabase.from('sales').select('*').eq('business_id', biz.id).gte('created_at', since.toISOString()).order('created_at', { ascending: false }),
-      supabase.from('expenses').select('*').eq('business_id', biz.id).gte('created_at', since.toISOString()),
-      supabase.from('sale_items').select('product_name, quantity, unit_price').in('sale_id', (await supabase.from('sales').select('id').eq('business_id', biz.id).gte('created_at', since.toISOString())).data?.map((x: any) => x.id) || []),
-    ])
-    setSales(s.data || [])
-    setExpenses(e.data || [])
-    setProducts(items.data || [])
+    let salesQuery = supabase.from('sales').select('*').eq('business_id', biz.id)
+      .gte('created_at', since.toISOString()).lte('created_at', until.toISOString())
+      .order('created_at', { ascending: false })
+    let expensesQuery = supabase.from('expenses').select('*').eq('business_id', biz.id)
+      .gte('created_at', since.toISOString()).lte('created_at', until.toISOString())
+
+    if (selectedBranchId) {
+      salesQuery = salesQuery.eq('branch_id', selectedBranchId)
+      expensesQuery = expensesQuery.eq('branch_id', selectedBranchId)
+    }
+
+    const [salesRes, expensesRes] = await Promise.all([salesQuery, expensesQuery])
+    const salesData = salesRes.data || []
+    setSales(salesData)
+    setExpenses(expensesRes.data || [])
+
+    const saleIds = salesData.map((s: any) => s.id)
+    let items: any[] = []
+    if (saleIds.length > 0) {
+      const { data: itemsData } = await supabase
+        .from('sale_items')
+        .select('product_id, product_name, quantity, unit_price, subtotal')
+        .in('sale_id', saleIds)
+      items = itemsData || []
+    }
+    setSaleItems(items)
+
+    // Costo real de lo vendido (incluye recetas: suma costo de cada ingrediente)
+    const costMap = await getProductCostMap(supabase, biz.id)
+    setCogs(calculateCOGS(items, costMap))
+
     setLoading(false)
   }
 
   const totalSales = sales.reduce((s, v) => s + Number(v.total), 0)
   const totalExp = expenses.reduce((s, v) => s + Number(v.amount), 0)
-  const profit = totalSales - totalExp
+  const gananciaBruta = totalSales - cogs
+  const gananciaNeta = gananciaBruta - totalExp
   const curr = business?.currency_symbol || '$'
 
   const byMethod: Record<string, number> = { efectivo: 0, tarjeta: 0, transferencia: 0 }
   sales.forEach(s => { byMethod[s.payment_method] = (byMethod[s.payment_method] || 0) + Number(s.total) })
 
   const prodCount: Record<string, number> = {}
-  products.forEach(p => { prodCount[p.product_name] = (prodCount[p.product_name] || 0) + Number(p.quantity) })
+  saleItems.forEach(p => { prodCount[p.product_name] = (prodCount[p.product_name] || 0) + Number(p.quantity) })
   const topProds: [string, number][] = Object.entries(prodCount).sort((a, b) => b[1] - a[1]).slice(0, 5)
   const maxProd: number = topProds.length ? topProds[0][1] : 1
 
@@ -59,17 +106,42 @@ export default function ReportsPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">📈 Reportes</h1>
-      <div className="flex gap-2 mb-6">
-        {([['today', 'Hoy'], ['week', 'Semana'], ['month', 'Mes']] as const).map(([v, l]) => (
+      <div className="flex gap-2 mb-4 flex-wrap">
+        {([['today', 'Hoy'], ['week', 'Semana'], ['month', 'Mes'], ['custom', '📅 Personalizado']] as const).map(([v, l]) => (
           <button key={v} onClick={() => setPeriod(v)} className={`px-4 py-2 rounded-xl text-sm font-semibold ${period === v ? 'bg-primary-100 text-primary-700' : 'bg-white border hover:bg-gray-50'}`}>{l}</button>
         ))}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      {period === 'custom' && (
+        <div className="flex flex-wrap items-end gap-3 mb-6 bg-white border rounded-xl p-4">
+          <div>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Desde</label>
+            <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="px-3 py-2 rounded-lg border text-sm" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Hasta</label>
+            <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="px-3 py-2 rounded-lg border text-sm" />
+          </div>
+          <p className="text-xs text-gray-400 pb-2">Para ver un solo día, poné la misma fecha en "Desde" y "Hasta"</p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Total Ventas</p><p className="text-2xl font-bold text-primary-600">{curr}{totalSales.toFixed(0)}</p></div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Transacciones</p><p className="text-2xl font-bold">{sales.length}</p></div>
+        <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Costo de Productos</p><p className="text-2xl font-bold text-orange-500">{curr}{cogs.toFixed(0)}</p></div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Gastos</p><p className="text-2xl font-bold text-red-500">{curr}{totalExp.toFixed(0)}</p></div>
-        <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Ganancia</p><p className={`text-2xl font-bold ${profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{curr}{profit.toFixed(0)}</p></div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mb-6">
+        <div className="bg-white rounded-2xl p-5 shadow-sm border">
+          <p className="text-xs text-gray-500">Utilidad Bruta <span className="text-gray-400">(ventas − costo)</span></p>
+          <p className={`text-2xl font-bold ${gananciaBruta >= 0 ? 'text-green-600' : 'text-red-600'}`}>{curr}{gananciaBruta.toFixed(2)}</p>
+        </div>
+        <div className="bg-white rounded-2xl p-5 shadow-sm border">
+          <p className="text-xs text-gray-500">Ganancia Neta <span className="text-gray-400">(− gastos)</span></p>
+          <p className={`text-2xl font-bold ${gananciaNeta >= 0 ? 'text-green-600' : 'text-red-600'}`}>{curr}{gananciaNeta.toFixed(2)}</p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -126,6 +198,7 @@ export default function ReportsPage() {
             </tbody>
           </table>
         </div>
+        {sales.length === 0 && <p className="text-center text-gray-400 py-8">No hay ventas en este rango de fechas</p>}
       </div>
     </div>
   )
