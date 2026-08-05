@@ -90,7 +90,6 @@ export default function ReportsPage() {
   const totalSales = sales.reduce((s, v) => s + Number(v.total), 0)
   const totalExp = expenses.reduce((s, v) => s + Number(v.amount), 0)
   const gananciaBruta = totalSales - cogs
-  const gananciaNeta = gananciaBruta - totalExp
   const curr = business?.currency_symbol || '$'
 
   const byMethod: Record<string, number> = { efectivo: 0, tarjeta: 0, transferencia: 0 }
@@ -133,14 +132,10 @@ export default function ReportsPage() {
         <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Gastos</p><p className="text-2xl font-bold text-red-500">{curr}{totalExp.toFixed(0)}</p></div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-6">
+      <div className="grid grid-cols-1 gap-3 mb-6">
         <div className="bg-white rounded-2xl p-5 shadow-sm border">
-          <p className="text-xs text-gray-500">Utilidad Bruta <span className="text-gray-400">(ventas − costo)</span></p>
+          <p className="text-xs text-gray-500">Ganancia Bruta <span className="text-gray-400">(ventas − costo)</span></p>
           <p className={`text-2xl font-bold ${gananciaBruta >= 0 ? 'text-green-600' : 'text-red-600'}`}>{curr}{gananciaBruta.toFixed(2)}</p>
-        </div>
-        <div className="bg-white rounded-2xl p-5 shadow-sm border">
-          <p className="text-xs text-gray-500">Ganancia Neta <span className="text-gray-400">(− gastos)</span></p>
-          <p className={`text-2xl font-bold ${gananciaNeta >= 0 ? 'text-green-600' : 'text-red-600'}`}>{curr}{gananciaNeta.toFixed(2)}</p>
         </div>
       </div>
 
