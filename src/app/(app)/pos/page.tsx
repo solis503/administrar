@@ -31,6 +31,7 @@ export default function POSPage() {
   const [expectedCash, setExpectedCash] = useState(0)
   const [closingShift, setClosingShift] = useState(false)
   const [submittingSale, setSubmittingSale] = useState(false)
+  const [saleError, setSaleError] = useState('')
   const supabase = createClient()
   const { selectedBranchId, branches, canSwitchBranches } = useBranch()
 
@@ -187,76 +188,88 @@ export default function POSPage() {
   const completeSale = async () => {
     if (!business || !selectedBranchId || !currentShift) return
     if (submittingSale) return
+    setSaleError('')
     setSubmittingSale(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setSubmittingSale(false); return }
 
-    let payments: { method: string; amount: number }[] = []
-    let paid = 0
-    let change = 0
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('No se pudo confirmar tu sesión. Cerrá sesión y volvé a entrar.')
 
-    if (isMixedPayment) {
-      if (!mixedMatches) { setSubmittingSale(false); return }
-      payments = [
-        { method: 'efectivo', amount: parseFloat(mixedAmounts.efectivo) || 0 },
-        { method: 'tarjeta', amount: parseFloat(mixedAmounts.tarjeta) || 0 },
-        { method: 'transferencia', amount: parseFloat(mixedAmounts.transferencia) || 0 },
-      ].filter(p => p.amount > 0)
-      paid = mixedSum
-      change = 0
-    } else {
-      paid = parseFloat(amountPaid) || total
-      change = paymentMethod === 'efectivo' ? Math.max(0, paid - total) : 0
-      payments = [{ method: paymentMethod, amount: total }]
-    }
+      let payments: { method: string; amount: number }[] = []
+      let paid = 0
+      let change = 0
 
-    const { data: sale } = await supabase.from('sales').insert({
-      business_id: business.id,
-      branch_id: selectedBranchId,
-      shift_id: currentShift.id,
-      user_id: user.id,
-      total: total,
-      tax_amount: tax,
-      payment_method: isMixedPayment ? 'mixto' : paymentMethod,
-      amount_paid: paid,
-      change_amount: change,
-      status: 'completada',
-    }).select().single()
+      if (isMixedPayment) {
+        if (!mixedMatches) throw new Error('Los montos del pago mixto no suman el total')
+        payments = [
+          { method: 'efectivo', amount: parseFloat(mixedAmounts.efectivo) || 0 },
+          { method: 'tarjeta', amount: parseFloat(mixedAmounts.tarjeta) || 0 },
+          { method: 'transferencia', amount: parseFloat(mixedAmounts.transferencia) || 0 },
+        ].filter(p => p.amount > 0)
+        paid = mixedSum
+        change = 0
+      } else {
+        paid = parseFloat(amountPaid) || total
+        change = paymentMethod === 'efectivo' ? Math.max(0, paid - total) : 0
+        payments = [{ method: paymentMethod, amount: total }]
+      }
 
-    if (!sale) { setSubmittingSale(false); return }
+      const { data: sale, error: saleErr } = await supabase.from('sales').insert({
+        business_id: business.id,
+        branch_id: selectedBranchId,
+        shift_id: currentShift.id,
+        user_id: user.id,
+        total: total,
+        tax_amount: tax,
+        payment_method: isMixedPayment ? 'mixto' : paymentMethod,
+        amount_paid: paid,
+        change_amount: change,
+        status: 'completada',
+      }).select().single()
 
-    for (const p of payments) {
-      await supabase.from('sale_payments').insert({ sale_id: sale.id, method: p.method, amount: p.amount })
-    }
+      if (saleErr || !sale) throw new Error(saleErr?.message || 'No se pudo registrar la venta')
 
-    for (const item of cart) {
-      await supabase.from('sale_items').insert({
-        sale_id: sale.id,
-        product_id: item.isCustom ? null : item.id,
-        product_name: item.name,
-        quantity: item.qty,
-        unit_price: item.price,
-        subtotal: item.price * item.qty,
-        cost: item.isCustom ? (item.cost || 0) : 0,
-        is_custom: !!item.isCustom,
+      // Mandamos los pagos y las líneas del carrito en paralelo (en vez de uno por uno) para que sea más rápido
+      const paymentInserts = payments.map(p =>
+        supabase.from('sale_payments').insert({ sale_id: sale.id, method: p.method, amount: p.amount })
+      )
+
+      const itemInserts = cart.map(async (item) => {
+        const { error: itemErr } = await supabase.from('sale_items').insert({
+          sale_id: sale.id,
+          product_id: item.isCustom ? null : item.id,
+          product_name: item.name,
+          quantity: item.qty,
+          unit_price: item.price,
+          subtotal: item.price * item.qty,
+          cost: item.isCustom ? (item.cost || 0) : 0,
+          is_custom: !!item.isCustom,
+        })
+        if (itemErr) throw new Error(`No se pudo guardar "${item.name}": ${itemErr.message}`)
+
+        if (!item.isCustom) {
+          const product = products.find(p => p.id === item.id)
+          if (product?.product_type === 'receta') {
+            await supabase.rpc('decrement_recipe', { p_product_id: item.id, p_multiplier: item.qty })
+          } else {
+            await supabase.rpc('decrement_stock', { p_product_id: item.id, p_quantity: item.qty })
+          }
+        }
       })
 
-      if (!item.isCustom) {
-        const product = products.find(p => p.id === item.id)
-        if (product?.product_type === 'receta') {
-          await supabase.rpc('decrement_recipe', { p_product_id: item.id, p_multiplier: item.qty })
-        } else {
-          await supabase.rpc('decrement_stock', { p_product_id: item.id, p_quantity: item.qty })
-        }
-      }
-    }
+      await Promise.all([...paymentInserts, ...itemInserts])
 
-    setSaleResult({ total, change, method: isMixedPayment ? 'mixto' : paymentMethod, products: cart })
-    setCart([])
-    setShowPayment(false)
-    setShowSaleOk(true)
-    setSubmittingSale(false)
-    loadData()
+      setSaleResult({ total, change, method: isMixedPayment ? 'mixto' : paymentMethod, products: cart })
+      setCart([])
+      setShowPayment(false)
+      setShowSaleOk(true)
+      loadData()
+    } catch (err: any) {
+      console.error('Error al cobrar:', err)
+      setSaleError(err.message || 'No se pudo completar la venta. Revisá tu conexión e intentá de nuevo.')
+    } finally {
+      setSubmittingSale(false)
+    }
   }
 
   const printTicket = () => {
@@ -542,6 +555,8 @@ export default function POSPage() {
               </div>
             )}
 
+            {saleError && <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-sm mb-3">{saleError}</div>}
+
             <div className="flex gap-3 mt-4">
               <button onClick={completeSale} disabled={submittingSale || (isMixedPayment && !mixedMatches)} className="flex-1 py-3 bg-green-600 text-white font-bold rounded-xl disabled:opacity-50">
                 {submittingSale ? 'Procesando...' : '✓ Confirmar'}
@@ -600,4 +615,4 @@ export default function POSPage() {
       )}
     </div>
   )
-                                                     }
+                                                                                           }
