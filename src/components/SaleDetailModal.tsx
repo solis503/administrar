@@ -21,7 +21,7 @@ export default function SaleDetailModal({
   const [reason, setReason] = useState('')
   const [processing, setProcessing] = useState(false)
   const [error, setError] = useState('')
-  const [mode, setMode] = useState<'view' | 'return' | 'void'>('view')
+  const [mode, setMode] = useState<'view' | 'return' | 'void' | 'delete'>('view')
   const supabase = createClient()
 
   useEffect(() => { loadItems() }, [sale.id])
@@ -136,6 +136,25 @@ export default function SaleDetailModal({
     }
   }
 
+  const handleHardDelete = async () => {
+    setError('')
+    setProcessing(true)
+    try {
+      for (const item of items) {
+        const pending = Number(item.quantity) - Number(item.returned_quantity)
+        if (pending > 0) await restoreStock(item, pending)
+      }
+      const { error: delErr } = await supabase.from('sales').delete().eq('id', sale.id)
+      if (delErr) throw delErr
+      onChanged()
+      onClose()
+    } catch (err: any) {
+      setError(err.message || 'No se pudo eliminar la venta')
+    } finally {
+      setProcessing(false)
+    }
+  }
+
   const totalReturnAmount = items.reduce((s, item) => {
     const qty = parseFloat(returnQty[item.id] || '0') || 0
     return s + qty * Number(item.unit_price)
@@ -202,13 +221,16 @@ export default function SaleDetailModal({
             {error && <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-sm mb-3">{error}</div>}
 
             {!isOwner ? (
-              <p className="text-xs text-gray-400 text-center mt-2">Solo el dueño del negocio puede anular o hacer devoluciones.</p>
-            ) : sale.status !== 'completada' ? (
-              <p className="text-xs text-gray-400 text-center mt-2">Esta venta ya está anulada.</p>
+              <p className="text-xs text-gray-400 text-center mt-2">Solo el dueño del negocio puede anular, devolver o eliminar ventas.</p>
             ) : mode === 'view' ? (
-              <div className="flex gap-2 mt-4">
-                <button onClick={() => setMode('return')} className="flex-1 py-2.5 bg-orange-100 text-orange-700 font-semibold rounded-xl text-sm">↩️ Devolución parcial</button>
-                <button onClick={() => setMode('void')} className="flex-1 py-2.5 bg-red-100 text-red-700 font-semibold rounded-xl text-sm">✕ Anular venta</button>
+              <div className="flex flex-col gap-2 mt-4">
+                {sale.status === 'completada' && (
+                  <div className="flex gap-2">
+                    <button onClick={() => setMode('return')} className="flex-1 py-2.5 bg-orange-100 text-orange-700 font-semibold rounded-xl text-sm">↩️ Devolución parcial</button>
+                    <button onClick={() => setMode('void')} className="flex-1 py-2.5 bg-red-100 text-red-700 font-semibold rounded-xl text-sm">✕ Anular venta</button>
+                  </div>
+                )}
+                <button onClick={() => setMode('delete')} className="w-full py-2.5 bg-red-600 text-white font-semibold rounded-xl text-sm">🗑️ Eliminar venta por completo</button>
               </div>
             ) : mode === 'return' ? (
               <div className="mt-3">
@@ -222,7 +244,7 @@ export default function SaleDetailModal({
                   <button onClick={() => setMode('view')} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Volver</button>
                 </div>
               </div>
-            ) : (
+            ) : mode === 'void' ? (
               <div className="mt-3">
                 <label className="text-sm font-medium block mb-1">Motivo de la anulación <span className="text-gray-400 font-normal">(opcional)</span></label>
                 <input value={reason} onChange={e => setReason(e.target.value)} className="w-full px-3 py-2 rounded-lg border mb-3" placeholder="Ej: Se cobró por error" />
@@ -230,6 +252,17 @@ export default function SaleDetailModal({
                 <div className="flex gap-3">
                   <button onClick={handleVoid} disabled={processing} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl disabled:opacity-50">
                     {processing ? 'Anulando...' : 'Confirmar anulación'}
+                  </button>
+                  <button onClick={() => setMode('view')} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Volver</button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3">
+                <p className="text-sm text-gray-700 font-semibold mb-1">⚠️ Esto borra la venta por completo, para siempre.</p>
+                <p className="text-sm text-gray-500 mb-3">A diferencia de "Anular", esta venta desaparece del historial y de tus reportes. Se restaura el inventario que no se haya devuelto ya. Usalo solo para ventas hechas por error (ej. pruebas o cobros duplicados).</p>
+                <div className="flex gap-3">
+                  <button onClick={handleHardDelete} disabled={processing} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl disabled:opacity-50">
+                    {processing ? 'Eliminando...' : 'Sí, eliminar para siempre'}
                   </button>
                   <button onClick={() => setMode('view')} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Volver</button>
                 </div>
@@ -242,4 +275,5 @@ export default function SaleDetailModal({
       </div>
     </div>
   )
-                    }
+}
+                    
