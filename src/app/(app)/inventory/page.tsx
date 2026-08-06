@@ -2,9 +2,11 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import { useBranch } from '@/lib/branch-context'
+import { getRecipeAvailability } from '@/lib/recipeAvailability'
 
 export default function InventoryPage() {
   const [products, setProducts] = useState<any[]>([])
+  const [recipeAvailability, setRecipeAvailability] = useState<Record<string, number>>({})
   const [business, setBusiness] = useState<any>(null)
   const [showMove, setShowMove] = useState<any>(null)
   const [filter, setFilter] = useState('all')
@@ -42,6 +44,8 @@ export default function InventoryPage() {
       if (selectedBranchId) query = query.eq('branch_id', selectedBranchId)
       const { data: prods } = await query
       setProducts(prods || [])
+      const recipeIds = (prods || []).filter(p => p.product_type === 'receta').map(p => p.id)
+      setRecipeAvailability(await getRecipeAvailability(supabase, recipeIds))
     }
     setLoading(false)
   }
@@ -91,10 +95,12 @@ export default function InventoryPage() {
   }
 
   const filtered = products.filter(p => {
+    if (p.product_type === 'receta') return false
     if (filter === 'low') return Number(p.stock) <= Number(p.min_stock) && Number(p.stock) > 0
     if (filter === 'out') return Number(p.stock) <= 0
     return true
   })
+  const recipes = products.filter(p => p.product_type === 'receta')
 
   if (loading) {
     return (
@@ -196,7 +202,41 @@ export default function InventoryPage() {
             ))}
           </tbody>
         </table>
+        {filtered.length === 0 && <p className="text-center text-gray-400 py-6 text-sm">Nada por aquí</p>}
       </div>
+
+      {recipes.length > 0 && (
+        <div className="mt-6">
+          <h2 className="text-lg font-semibold mb-3">🍽️ Recetas <span className="text-xs font-normal text-gray-400">(su disponibilidad se calcula sola según los ingredientes, no se ajusta a mano)</span></h2>
+          <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Receta</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Alcanza para</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Estado</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {recipes.map(p => {
+                  const available = recipeAvailability[p.id] || 0
+                  return (
+                    <tr key={p.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 font-medium">🍽️ {p.name}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${available > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                          {available} unidades
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">{available <= 0 ? '🔴' : available <= 3 ? '⚠️' : '✅'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {showMove && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -239,3 +279,4 @@ export default function InventoryPage() {
     </div>
   )
 }
+              
