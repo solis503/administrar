@@ -17,9 +17,18 @@ export default function POSPage() {
   const [showSaleOk, setShowSaleOk] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState('efectivo')
   const [amountPaid, setAmountPaid] = useState('')
+  const [isMixedPayment, setIsMixedPayment] = useState(false)
+  const [mixedAmounts, setMixedAmounts] = useState({ efectivo: '', tarjeta: '', transferencia: '' })
   const [saleResult, setSaleResult] = useState<any>(null)
   const [business, setBusiness] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [currentShift, setCurrentShift] = useState<any>(null)
+  const [openingAmount, setOpeningAmount] = useState('')
+  const [openingShift, setOpeningShift] = useState(false)
+  const [showCloseShift, setShowCloseShift] = useState(false)
+  const [closingAmount, setClosingAmount] = useState('')
+  const [expectedCash, setExpectedCash] = useState(0)
+  const [closingShift, setClosingShift] = useState(false)
   const supabase = createClient()
   const { selectedBranchId, branches, canSwitchBranches } = useBranch()
 
@@ -36,13 +45,82 @@ export default function POSPage() {
     if (biz) {
       setBusiness(biz)
       if (selectedBranchId) {
-        const { data } = await supabase.from('products').select('*').eq('business_id', biz.id).eq('branch_id', selectedBranchId).eq('is_sellable', true).gt('stock', 0)
+        const { data } = await supabase.from('products').select('*').eq('business_id', biz.id).eq('branch_id', selectedBranchId).eq('is_sellable', true).or('product_type.eq.receta,stock.gt.0')
         setProducts(data || [])
+
+        const { data: shift } = await supabase
+          .from('cash_shifts')
+          .select('*')
+          .eq('business_id', biz.id)
+          .eq('branch_id', selectedBranchId)
+          .eq('status', 'open')
+          .order('opened_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        setCurrentShift(shift || null)
       } else {
         setProducts([])
+        setCurrentShift(null)
       }
     }
     setLoading(false)
+  }
+
+  const openShift = async () => {
+    if (!business || !selectedBranchId) return
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    setOpeningShift(true)
+    const { data } = await supabase.from('cash_shifts').insert({
+      business_id: business.id,
+      branch_id: selectedBranchId,
+      opened_by: user.id,
+      opening_amount: parseFloat(openingAmount) || 0,
+      status: 'open',
+    }).select().single()
+    setCurrentShift(data || null)
+    setOpeningAmount('')
+    setOpeningShift(false)
+  }
+
+  const openCloseShiftModal = async () => {
+    if (!currentShift) return
+    const { data: sales } = await supabase.from('sales').select('id').eq('shift_id', currentShift.id).eq('status', 'completada')
+    const saleIds = (sales || []).map(s => s.id)
+    let cashSum = 0
+    if (saleIds.length > 0) {
+      const { data: payments } = await supabase.from('sale_payments').select('amount, method, sale_id').in('sale_id', saleIds).eq('method', 'efectivo')
+      cashSum = (payments || []).reduce((s, p) => s + Number(p.amount), 0)
+    }
+    let returnsSum = 0
+    if (saleIds.length > 0) {
+      const { data: returns } = await supabase.from('sale_returns').select('total_amount').in('sale_id', saleIds)
+      returnsSum = (returns || []).reduce((s, r) => s + Number(r.total_amount), 0)
+    }
+    const expected = Number(currentShift.opening_amount) + cashSum - returnsSum
+    setExpectedCash(expected)
+    setClosingAmount(expected.toFixed(2))
+    setShowCloseShift(true)
+  }
+
+  const confirmCloseShift = async () => {
+    if (!currentShift) return
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    setClosingShift(true)
+    const counted = parseFloat(closingAmount) || 0
+    await supabase.from('cash_shifts').update({
+      closing_amount: counted,
+      expected_amount: expectedCash,
+      difference: counted - expectedCash,
+      status: 'closed',
+      closed_by: user.id,
+      closed_at: new Date().toISOString(),
+    }).eq('id', currentShift.id)
+    setClosingShift(false)
+    setShowCloseShift(false)
+    setCurrentShift(null)
+    setCart([])
   }
 
   const addToCart = (product: any) => {
@@ -90,31 +168,58 @@ export default function POSPage() {
   const total = subtotal + tax
   const curr = business?.currency_symbol || '$'
 
+  const mixedSum = (parseFloat(mixedAmounts.efectivo) || 0) + (parseFloat(mixedAmounts.tarjeta) || 0) + (parseFloat(mixedAmounts.transferencia) || 0)
+  const mixedMatches = Math.abs(mixedSum - total) < 0.01
+
   const openPayment = () => {
     setAmountPaid(total.toFixed(2))
+    setIsMixedPayment(false)
+    setMixedAmounts({ efectivo: '', tarjeta: '', transferencia: '' })
     setShowPayment(true)
   }
 
   const completeSale = async () => {
-    if (!business || !selectedBranchId) return
+    if (!business || !selectedBranchId || !currentShift) return
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const paid = parseFloat(amountPaid) || total
-    const change = paymentMethod === 'efectivo' ? Math.max(0, paid - total) : 0
+    let payments: { method: string; amount: number }[] = []
+    let paid = 0
+    let change = 0
+
+    if (isMixedPayment) {
+      if (!mixedMatches) return
+      payments = [
+        { method: 'efectivo', amount: parseFloat(mixedAmounts.efectivo) || 0 },
+        { method: 'tarjeta', amount: parseFloat(mixedAmounts.tarjeta) || 0 },
+        { method: 'transferencia', amount: parseFloat(mixedAmounts.transferencia) || 0 },
+      ].filter(p => p.amount > 0)
+      paid = mixedSum
+      change = 0
+    } else {
+      paid = parseFloat(amountPaid) || total
+      change = paymentMethod === 'efectivo' ? Math.max(0, paid - total) : 0
+      payments = [{ method: paymentMethod, amount: total }]
+    }
 
     const { data: sale } = await supabase.from('sales').insert({
       business_id: business.id,
       branch_id: selectedBranchId,
+      shift_id: currentShift.id,
       user_id: user.id,
       total: total,
       tax_amount: tax,
-      payment_method: paymentMethod,
+      payment_method: isMixedPayment ? 'mixto' : paymentMethod,
       amount_paid: paid,
       change_amount: change,
+      status: 'completada',
     }).select().single()
 
     if (!sale) return
+
+    for (const p of payments) {
+      await supabase.from('sale_payments').insert({ sale_id: sale.id, method: p.method, amount: p.amount })
+    }
 
     for (const item of cart) {
       await supabase.from('sale_items').insert({
@@ -138,7 +243,7 @@ export default function POSPage() {
       }
     }
 
-    setSaleResult({ total, change, method: paymentMethod, products: cart })
+    setSaleResult({ total, change, method: isMixedPayment ? 'mixto' : paymentMethod, products: cart })
     setCart([])
     setShowPayment(false)
     setShowSaleOk(true)
@@ -173,10 +278,37 @@ export default function POSPage() {
     )
   }
 
+  if (!currentShift) {
+    return (
+      <div className="max-w-sm mx-auto py-10 text-center">
+        <p className="text-4xl mb-3">🧾</p>
+        <h2 className="font-bold text-lg text-gray-900 mb-1">Abrí tu turno de caja</h2>
+        <p className="text-sm text-gray-500 mb-5">Antes de vender, decinos con cuánto efectivo empezás la caja hoy.</p>
+        <label className="text-sm font-medium block mb-1 text-left">Efectivo inicial en caja</label>
+        <input
+          type="number"
+          value={openingAmount}
+          onChange={e => setOpeningAmount(e.target.value)}
+          className="w-full px-4 py-3 rounded-xl border outline-none text-lg text-center mb-4"
+          placeholder="0.00"
+          autoFocus
+        />
+        <button onClick={openShift} disabled={openingShift || !openingAmount} className="w-full py-3 bg-primary-600 text-white font-bold rounded-xl disabled:opacity-50">
+          {openingShift ? 'Abriendo...' : 'Abrir turno y empezar a vender'}
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col lg:flex-row gap-4" style={{ minHeight: 'calc(100vh - 6rem)' }}>
       <div className="flex-1 flex flex-col">
-        <h1 className="text-2xl font-bold mb-4">🛒 Punto de Venta</h1>
+        <div className="flex items-center justify-between mb-4 gap-2">
+          <h1 className="text-2xl font-bold">🛒 Punto de Venta</h1>
+          <button onClick={openCloseShiftModal} className="text-xs font-semibold bg-gray-100 text-gray-700 px-3 py-2 rounded-xl border flex-shrink-0">
+            🧾 Turno: {curr}{Number(currentShift.opening_amount).toFixed(2)} · Cerrar
+          </button>
+        </div>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar producto..." className="w-full px-4 py-3 rounded-xl border outline-none mb-3" />
         <button
           onClick={() => setShowCustomSale(true)}
@@ -350,23 +482,88 @@ export default function POSPage() {
       {showPayment && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-6">
-            <h2 className="text-xl font-bold mb-4">💰 Cobro</h2>
-            <div className="grid grid-cols-3 gap-2 mb-4">
-              {[{ v: 'efectivo', l: '💵 Efectivo' }, { v: 'tarjeta', l: '💳 Tarjeta' }, { v: 'transferencia', l: '🏦 Transfer.' }].map(m => (
-                <button key={m.v} onClick={() => setPaymentMethod(m.v)} className={`py-3 rounded-xl border-2 font-semibold ${paymentMethod === m.v ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-gray-200'}`}>{m.l}</button>
-              ))}
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">💰 Cobro</h2>
+              <button
+                onClick={() => setIsMixedPayment(!isMixedPayment)}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-lg border ${isMixedPayment ? 'bg-primary-600 text-white border-primary-600' : 'bg-gray-50 text-gray-600'}`}
+              >
+                🔀 Pago mixto
+              </button>
             </div>
-            <div className="bg-gray-50 rounded-xl p-3 mb-3"><div className="flex justify-between text-lg font-bold"><span>Total</span><span>{curr}{total.toFixed(2)}</span></div></div>
-            {paymentMethod === 'efectivo' && (
-              <div className="mb-3">
-                <label className="text-sm font-medium block mb-1">¿Cuánto entrega el cliente?</label>
-                <input type="number" value={amountPaid} onChange={e => setAmountPaid(e.target.value)} className="w-full px-4 py-3 rounded-xl border text-lg" />
-                {parseFloat(amountPaid) >= total && <p className="text-green-600 font-semibold mt-1">Vuelto: {curr}{(parseFloat(amountPaid) - total).toFixed(2)}</p>}
+
+            {!isMixedPayment ? (
+              <>
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  {[{ v: 'efectivo', l: '💵 Efectivo' }, { v: 'tarjeta', l: '💳 Tarjeta' }, { v: 'transferencia', l: '🏦 Transfer.' }].map(m => (
+                    <button key={m.v} onClick={() => setPaymentMethod(m.v)} className={`py-3 rounded-xl border-2 font-semibold ${paymentMethod === m.v ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-gray-200'}`}>{m.l}</button>
+                  ))}
+                </div>
+                <div className="bg-gray-50 rounded-xl p-3 mb-3"><div className="flex justify-between text-lg font-bold"><span>Total</span><span>{curr}{total.toFixed(2)}</span></div></div>
+                {paymentMethod === 'efectivo' && (
+                  <div className="mb-3">
+                    <label className="text-sm font-medium block mb-1">¿Cuánto entrega el cliente?</label>
+                    <input type="number" value={amountPaid} onChange={e => setAmountPaid(e.target.value)} className="w-full px-4 py-3 rounded-xl border text-lg" />
+                    {parseFloat(amountPaid) >= total && <p className="text-green-600 font-semibold mt-1">Vuelto: {curr}{(parseFloat(amountPaid) - total).toFixed(2)}</p>}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="space-y-3 mb-3">
+                <div className="bg-gray-50 rounded-xl p-3"><div className="flex justify-between text-lg font-bold"><span>Total a cubrir</span><span>{curr}{total.toFixed(2)}</span></div></div>
+                <div>
+                  <label className="text-sm font-medium block mb-1">💵 Efectivo</label>
+                  <input type="number" value={mixedAmounts.efectivo} onChange={e => setMixedAmounts({ ...mixedAmounts, efectivo: e.target.value })} className="w-full px-4 py-3 rounded-xl border" placeholder="0.00" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium block mb-1">💳 Tarjeta</label>
+                  <input type="number" value={mixedAmounts.tarjeta} onChange={e => setMixedAmounts({ ...mixedAmounts, tarjeta: e.target.value })} className="w-full px-4 py-3 rounded-xl border" placeholder="0.00" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium block mb-1">🏦 Transferencia</label>
+                  <input type="number" value={mixedAmounts.transferencia} onChange={e => setMixedAmounts({ ...mixedAmounts, transferencia: e.target.value })} className="w-full px-4 py-3 rounded-xl border" placeholder="0.00" />
+                </div>
+                <p className={`text-sm font-semibold ${mixedMatches ? 'text-green-600' : 'text-red-500'}`}>
+                  Suma: {curr}{mixedSum.toFixed(2)} {mixedMatches ? '✓ Coincide con el total' : `(falta ${curr}${(total - mixedSum).toFixed(2)})`}
+                </p>
               </div>
             )}
+
             <div className="flex gap-3 mt-4">
-              <button onClick={completeSale} className="flex-1 py-3 bg-green-600 text-white font-bold rounded-xl">✓ Confirmar</button>
+              <button onClick={completeSale} disabled={isMixedPayment && !mixedMatches} className="flex-1 py-3 bg-green-600 text-white font-bold rounded-xl disabled:opacity-50">✓ Confirmar</button>
               <button onClick={() => setShowPayment(false)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCloseShift && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6">
+            <h2 className="text-xl font-bold mb-1">🧾 Cerrar turno</h2>
+            <p className="text-sm text-gray-500 mb-4">Contá el efectivo físico que hay en la caja ahorita y ponelo abajo.</p>
+            <div className="bg-gray-50 rounded-xl p-4 mb-4 space-y-1 text-sm">
+              <div className="flex justify-between"><span>Efectivo inicial</span><span>{curr}{Number(currentShift.opening_amount).toFixed(2)}</span></div>
+              <div className="flex justify-between font-bold border-t pt-1 mt-1"><span>Efectivo esperado en caja</span><span>{curr}{expectedCash.toFixed(2)}</span></div>
+            </div>
+            <label className="text-sm font-medium block mb-1">Efectivo contado</label>
+            <input
+              type="number"
+              value={closingAmount}
+              onChange={e => setClosingAmount(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl border outline-none text-lg text-center mb-2"
+            />
+            {closingAmount && (
+              <p className={`text-sm font-semibold mb-3 ${Math.abs((parseFloat(closingAmount) || 0) - expectedCash) < 0.01 ? 'text-green-600' : (parseFloat(closingAmount) || 0) > expectedCash ? 'text-blue-600' : 'text-red-500'}`}>
+                Diferencia: {curr}{((parseFloat(closingAmount) || 0) - expectedCash).toFixed(2)}
+                {Math.abs((parseFloat(closingAmount) || 0) - expectedCash) < 0.01 ? ' (cuadra perfecto)' : (parseFloat(closingAmount) || 0) > expectedCash ? ' (sobra)' : ' (falta)'}
+              </p>
+            )}
+            <div className="flex gap-3 mt-4">
+              <button onClick={confirmCloseShift} disabled={closingShift} className="flex-1 py-3 bg-primary-600 text-white font-bold rounded-xl disabled:opacity-50">
+                {closingShift ? 'Cerrando...' : 'Cerrar turno'}
+              </button>
+              <button onClick={() => setShowCloseShift(false)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Cancelar</button>
             </div>
           </div>
         </div>
