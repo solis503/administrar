@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import * as XLSX from 'xlsx'
 import { useBranch } from '@/lib/branch-context'
@@ -260,6 +260,30 @@ export default function ProductsPage() {
 
   const [confirmDelete, setConfirmDelete] = useState<any>(null)
   const [deleting, setDeleting] = useState(false)
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
+
+  const toggleCategory = (key: string) => {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const groupByCategory = (list: any[]) => {
+    const groups = new Map<string, any[]>()
+    for (const p of list) {
+      const cat = p.category || 'Sin categoría'
+      if (!groups.has(cat)) groups.set(cat, [])
+      groups.get(cat)!.push(p)
+    }
+    return Array.from(groups.entries()).sort((a, b) => {
+      if (a[0] === 'Sin categoría') return 1
+      if (b[0] === 'Sin categoría') return -1
+      return a[0].localeCompare(b[0])
+    })
+  }
 
   const handleDelete = async () => {
     if (!confirmDelete) return
@@ -602,7 +626,17 @@ export default function ProductsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {recipes.map(p => (
+                {groupByCategory(recipes).map(([cat, items]) => {
+                  const key = `recipes:${cat}`
+                  const collapsed = collapsedCategories.has(key)
+                  return (
+                    <Fragment key={key}>
+                      <tr className="bg-gray-50 cursor-pointer" onClick={() => toggleCategory(key)}>
+                        <td colSpan={4} className="px-4 py-2 text-sm font-semibold text-gray-600">
+                          {collapsed ? '▶' : '▼'} {cat} <span className="text-gray-400 font-normal">({items.length})</span>
+                        </td>
+                      </tr>
+                      {!collapsed && items.map(p => (
                   <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openEdit(p)}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
@@ -630,7 +664,10 @@ export default function ProductsPage() {
                       </button>
                     </td>
                   </tr>
-                ))}
+                      ))}
+                    </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -650,8 +687,18 @@ export default function ProductsPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {finalProducts.map(p => (
-                <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openEdit(p)}>
+              {groupByCategory(finalProducts).map(([cat, items]) => {
+                const key = `final:${cat}`
+                const collapsed = collapsedCategories.has(key)
+                return (
+                  <Fragment key={key}>
+                    <tr className="bg-gray-50 cursor-pointer" onClick={() => toggleCategory(key)}>
+                      <td colSpan={4} className="px-4 py-2 text-sm font-semibold text-gray-600">
+                        {collapsed ? '▶' : '▼'} {cat} <span className="text-gray-400 font-normal">({items.length})</span>
+                      </td>
+                    </tr>
+                    {!collapsed && items.map(p => (
+              <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openEdit(p)}>
                   <td className="px-4 py-3 font-medium">
                     <div className="flex items-center gap-3">
                       {p.image_url ? (
@@ -660,7 +707,6 @@ export default function ProductsPage() {
                         <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-sm flex-shrink-0">📦</div>
                       )}
                       {p.name}
-                      {p.category && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{p.category}</span>}
                     </div>
                   </td>
                   <td className="px-4 py-3">{curr}{Number(p.price).toFixed(2)}</td>
@@ -678,7 +724,10 @@ export default function ProductsPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                    ))}
+                  </Fragment>
+                )
+              })}
             </tbody>
           </table>
           {finalProducts.length === 0 && <p className="text-center text-gray-400 py-6 text-sm">Sin productos finales todavía</p>}
@@ -698,8 +747,18 @@ export default function ProductsPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {ingredientProducts.map(p => (
-                <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openEdit(p)}>
+              {groupByCategory(ingredientProducts).map(([cat, items]) => {
+                const key = `ing:${cat}`
+                const collapsed = collapsedCategories.has(key)
+                return (
+                  <Fragment key={key}>
+                    <tr className="bg-gray-50 cursor-pointer" onClick={() => toggleCategory(key)}>
+                      <td colSpan={4} className="px-4 py-2 text-sm font-semibold text-gray-600">
+                        {collapsed ? '▶' : '▼'} {cat} <span className="text-gray-400 font-normal">({items.length})</span>
+                      </td>
+                    </tr>
+                    {!collapsed && items.map(p => (
+              <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openEdit(p)}>
                   <td className="px-4 py-3 font-medium">
                     <div className="flex items-center gap-3">
                       {p.image_url ? (
@@ -725,7 +784,10 @@ export default function ProductsPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                    ))}
+                  </Fragment>
+                )
+              })}
             </tbody>
           </table>
           {ingredientProducts.length === 0 && <p className="text-center text-gray-400 py-6 text-sm">Sin ingredientes todavía</p>}
@@ -1043,4 +1105,4 @@ export default function ProductsPage() {
       )}
     </div>
   )
-            }
+                                   }
