@@ -43,8 +43,11 @@ export async function getProductCostMap(
 
 /** Suma el costo total (costo de mercancía vendida) de una lista de líneas de venta */
 export function calculateCOGS(
-  saleItems: { product_id: string; quantity: number }[],
+  saleItems: { product_id: string | null; quantity: number; cost?: number }[],
   costMap: Record<string, number>
 ): number {
-  return saleItems.reduce((sum, item) => sum + Number(item.quantity) * (costMap[item.product_id] || 0), 0)
+  return saleItems.reduce((sum, item) => {
+    const unitCost = item.product_id ? (costMap[item.product_id] || 0) : (Number(item.cost) || 0)
+    return sum + Number(item.quantity) * unitCost
+  }, 0)
 }
