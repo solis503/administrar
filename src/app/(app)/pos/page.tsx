@@ -7,6 +7,12 @@ export default function POSPage() {
   const [products, setProducts] = useState<any[]>([])
   const [cart, setCart] = useState<any[]>([])
   const [search, setSearch] = useState('')
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+  const [showCartSheet, setShowCartSheet] = useState(false)
+  const [showCustomSale, setShowCustomSale] = useState(false)
+  const [customName, setCustomName] = useState('')
+  const [customCost, setCustomCost] = useState('')
+  const [customPrice, setCustomPrice] = useState('')
   const [showPayment, setShowPayment] = useState(false)
   const [showSaleOk, setShowSaleOk] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState('efectivo')
@@ -47,6 +53,23 @@ export default function POSPage() {
     } else {
       setCart([...cart, { id: product.id, name: product.name, price: product.price, qty: 1, image_url: product.image_url }])
     }
+  }
+
+  const addCustomToCart = () => {
+    if (!customName.trim() || !customPrice) return
+    setCart([...cart, {
+      id: `custom-${crypto.randomUUID()}`,
+      name: customName.trim(),
+      price: parseFloat(customPrice) || 0,
+      qty: 1,
+      image_url: null,
+      isCustom: true,
+      cost: parseFloat(customCost) || 0,
+    }])
+    setCustomName('')
+    setCustomCost('')
+    setCustomPrice('')
+    setShowCustomSale(false)
   }
 
   const updateQty = (id: string, delta: number) => {
@@ -96,18 +119,22 @@ export default function POSPage() {
     for (const item of cart) {
       await supabase.from('sale_items').insert({
         sale_id: sale.id,
-        product_id: item.id,
+        product_id: item.isCustom ? null : item.id,
         product_name: item.name,
         quantity: item.qty,
         unit_price: item.price,
         subtotal: item.price * item.qty,
+        cost: item.isCustom ? (item.cost || 0) : 0,
+        is_custom: !!item.isCustom,
       })
 
-      const product = products.find(p => p.id === item.id)
-      if (product?.product_type === 'receta') {
-        await supabase.rpc('decrement_recipe', { p_product_id: item.id, p_multiplier: item.qty })
-      } else {
-        await supabase.rpc('decrement_stock', { p_product_id: item.id, p_quantity: item.qty })
+      if (!item.isCustom) {
+        const product = products.find(p => p.id === item.id)
+        if (product?.product_type === 'receta') {
+          await supabase.rpc('decrement_recipe', { p_product_id: item.id, p_multiplier: item.qty })
+        } else {
+          await supabase.rpc('decrement_stock', { p_product_id: item.id, p_quantity: item.qty })
+        }
       }
     }
 
@@ -128,7 +155,11 @@ export default function POSPage() {
     win.print()
   }
 
-  const filtered = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode?.includes(search))
+  const categories = Array.from(new Set(products.map(p => p.category).filter(Boolean))) as string[]
+  const filtered = products
+    .filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode?.includes(search))
+    .filter(p => !selectedCategory || p.category === selectedCategory)
+  const cartCount = cart.reduce((s, i) => s + i.qty, 0)
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
 
@@ -146,8 +177,33 @@ export default function POSPage() {
     <div className="flex flex-col lg:flex-row gap-4" style={{ minHeight: 'calc(100vh - 6rem)' }}>
       <div className="flex-1 flex flex-col">
         <h1 className="text-2xl font-bold mb-4">🛒 Punto de Venta</h1>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar producto..." className="w-full px-4 py-3 rounded-xl border outline-none mb-4" />
-        <div className="flex-1 overflow-y-auto">
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar producto..." className="w-full px-4 py-3 rounded-xl border outline-none mb-3" />
+        <button
+          onClick={() => setShowCustomSale(true)}
+          className="w-full mb-3 py-3 rounded-xl border-2 border-dashed border-primary-300 text-primary-600 font-semibold hover:bg-primary-50"
+        >
+          ✏️ Venta libre (algo que no está en el catálogo)
+        </button>
+        {categories.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto pb-3 mb-1 -mx-1 px-1">
+            <button
+              onClick={() => setSelectedCategory(null)}
+              className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-semibold border-2 whitespace-nowrap ${!selectedCategory ? 'bg-primary-600 border-primary-600 text-white' : 'border-gray-200 text-gray-600'}`}
+            >
+              Todas
+            </button>
+            {categories.map(cat => (
+              <button
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-semibold border-2 whitespace-nowrap ${selectedCategory === cat ? 'bg-primary-600 border-primary-600 text-white' : 'border-gray-200 text-gray-600'}`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex-1 overflow-y-auto pb-24 lg:pb-0">
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
             {filtered.map(p => (
               <button key={p.id} onClick={() => addToCart(p)} className="bg-white rounded-xl p-3 border hover:border-primary-300 hover:shadow-md transition text-left flex flex-col">
@@ -167,7 +223,7 @@ export default function POSPage() {
         </div>
       </div>
 
-      <div className="lg:w-80 bg-white rounded-2xl shadow-sm border flex flex-col">
+      <div className="hidden lg:flex lg:w-80 bg-white rounded-2xl shadow-sm border flex-col">
         <div className="p-4 border-b flex justify-between"><h2 className="font-semibold">🧾 Carrito</h2>{cart.length > 0 && <button onClick={() => setCart([])} className="text-xs text-red-500">Vaciar</button>}</div>
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {cart.length === 0 ? <p className="text-center text-gray-400 py-8">Agrega productos</p> : cart.map(item => (
@@ -175,7 +231,7 @@ export default function POSPage() {
               <div className="w-9 h-9 rounded-lg bg-gray-200 overflow-hidden flex-shrink-0 flex items-center justify-center">
                 {item.image_url ? <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" /> : <span className="text-gray-400 text-xs">📦</span>}
               </div>
-              <div className="flex-1 min-w-0"><p className="font-medium text-sm truncate">{item.name}</p><p className="text-xs text-gray-500">{curr}{item.price.toFixed(2)}</p></div>
+              <div className="flex-1 min-w-0"><p className="font-medium text-sm truncate">{item.name}{item.isCustom && <span className="ml-1 text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full align-middle">Libre</span>}</p><p className="text-xs text-gray-500">{curr}{item.price.toFixed(2)}</p></div>
               <div className="flex items-center gap-1">
                 <button onClick={() => updateQty(item.id, -1)} className="w-7 h-7 rounded bg-white border">-</button>
                 <span className="w-8 text-center font-semibold">{item.qty}</span>
@@ -192,6 +248,104 @@ export default function POSPage() {
           <button onClick={openPayment} disabled={cart.length === 0} className="w-full py-3 bg-primary-600 text-white font-bold rounded-xl mt-2 disabled:opacity-50">Cobrar {curr}{total.toFixed(2)}</button>
         </div>
       </div>
+
+      {/* Barra fija abajo, solo en celular */}
+      {cartCount > 0 && (
+        <button
+          onClick={() => setShowCartSheet(true)}
+          className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-primary-600 text-white px-5 py-4 flex items-center justify-between shadow-lg"
+        >
+          <span className="flex items-center gap-2 font-semibold">
+            <span className="bg-white text-primary-600 rounded-full w-7 h-7 flex items-center justify-center text-sm font-bold">{cartCount}</span>
+            Ver carrito
+          </span>
+          <span className="flex items-center gap-2 font-bold text-lg">{curr}{total.toFixed(2)} ›</span>
+        </button>
+      )}
+
+      {/* Carrito deslizable, solo en celular */}
+      {showCartSheet && (
+        <div className="lg:hidden fixed inset-0 bg-black/50 z-50 flex items-end">
+          <div className="bg-white rounded-t-2xl w-full max-h-[85vh] flex flex-col">
+            <div className="p-4 border-b flex justify-between items-center">
+              <h2 className="font-semibold">🧾 Carrito</h2>
+              <div className="flex items-center gap-4">
+                {cart.length > 0 && <button onClick={() => setCart([])} className="text-xs text-red-500">Vaciar</button>}
+                <button onClick={() => setShowCartSheet(false)} className="text-gray-400 text-xl leading-none">✕</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {cart.length === 0 ? <p className="text-center text-gray-400 py-8">Agrega productos</p> : cart.map(item => (
+                <div key={item.id} className="flex items-center gap-2 bg-gray-50 rounded-xl p-2">
+                  <div className="w-9 h-9 rounded-lg bg-gray-200 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                    {item.image_url ? <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" /> : <span className="text-gray-400 text-xs">📦</span>}
+                  </div>
+                  <div className="flex-1 min-w-0"><p className="font-medium text-sm truncate">{item.name}{item.isCustom && <span className="ml-1 text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full align-middle">Libre</span>}</p><p className="text-xs text-gray-500">{curr}{item.price.toFixed(2)}</p></div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => updateQty(item.id, -1)} className="w-7 h-7 rounded bg-white border">-</button>
+                    <span className="w-8 text-center font-semibold">{item.qty}</span>
+                    <button onClick={() => updateQty(item.id, 1)} className="w-7 h-7 rounded bg-white border">+</button>
+                  </div>
+                  <button onClick={() => setCart(cart.filter(i => i.id !== item.id))} className="text-red-400">✕</button>
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t space-y-1">
+              <div className="flex justify-between text-sm"><span>Subtotal</span><span>{curr}{subtotal.toFixed(2)}</span></div>
+              {taxRate > 0 && <div className="flex justify-between text-sm text-gray-600"><span>IVA ({taxRate}%)</span><span>{curr}{tax.toFixed(2)}</span></div>}
+              <div className="flex justify-between text-xl font-bold border-t pt-2"><span>Total</span><span>{curr}{total.toFixed(2)}</span></div>
+              <button onClick={() => { setShowCartSheet(false); openPayment() }} disabled={cart.length === 0} className="w-full py-3 bg-primary-600 text-white font-bold rounded-xl mt-2 disabled:opacity-50">Cobrar {curr}{total.toFixed(2)}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCustomSale && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6">
+            <h2 className="text-xl font-bold mb-1">✏️ Venta libre</h2>
+            <p className="text-sm text-gray-500 mb-4">Para algo que el cliente pidió especial y no está en el catálogo. No descuenta inventario.</p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium block mb-1">¿Qué se vendió?</label>
+                <input
+                  value={customName}
+                  onChange={e => setCustomName(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border outline-none"
+                  placeholder="Ej: Combo especial pedido por cliente"
+                  autoFocus
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium block mb-1">Costo <span className="text-gray-400 font-normal">(opcional)</span></label>
+                  <input
+                    type="number"
+                    value={customCost}
+                    onChange={e => setCustomCost(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border outline-none"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium block mb-1">Precio a cobrar</label>
+                  <input
+                    type="number"
+                    value={customPrice}
+                    onChange={e => setCustomPrice(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border outline-none"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={addCustomToCart} disabled={!customName.trim() || !customPrice} className="flex-1 py-3 bg-primary-600 text-white font-bold rounded-xl disabled:opacity-50">Agregar al carrito</button>
+              <button onClick={() => { setShowCustomSale(false); setCustomName(''); setCustomCost(''); setCustomPrice('') }} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showPayment && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
