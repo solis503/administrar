@@ -87,7 +87,21 @@ export default function InventoryPage() {
   }
 
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  const [confirmRecipeDelete, setConfirmRecipeDelete] = useState<any>(null)
   const [deleting, setDeleting] = useState(false)
+
+  const deleteRecipe = async () => {
+    if (!confirmRecipeDelete) return
+    setDeleting(true)
+    const { error } = await supabase.from('products').delete().eq('id', confirmRecipeDelete.id)
+    setDeleting(false)
+    if (error) {
+      alert('No se pudo eliminar: ' + error.message)
+      return
+    }
+    setConfirmRecipeDelete(null)
+    loadData()
+  }
 
   const deleteSelected = async () => {
     if (selected.length === 0) return
@@ -224,6 +238,7 @@ export default function InventoryPage() {
                   <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Receta</th>
                   <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Alcanza para</th>
                   <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Estado</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500"></th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -238,6 +253,11 @@ export default function InventoryPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3">{available <= 0 ? '🔴' : available <= 3 ? '⚠️' : '✅'}</td>
+                      <td className="px-4 py-3">
+                        <button onClick={() => setConfirmRecipeDelete(p)} className="text-red-600 text-xs font-semibold">
+                          Eliminar
+                        </button>
+                      </td>
                     </tr>
                   )
                 })}
@@ -297,6 +317,24 @@ export default function InventoryPage() {
                 {deleting ? 'Eliminando...' : 'Sí, eliminar'}
               </button>
               <button onClick={() => setConfirmBulkDelete(false)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmRecipeDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center">
+            <p className="text-4xl mb-3">🗑️</p>
+            <h2 className="text-lg font-bold mb-1">¿Eliminar "{confirmRecipeDelete.name}"?</h2>
+            <p className="text-sm text-gray-500 mb-5">Esto no se puede deshacer.</p>
+            <div className="flex gap-3">
+              <button onClick={deleteRecipe} disabled={deleting} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl disabled:opacity-50">
+                {deleting ? 'Eliminando...' : 'Sí, eliminar'}
+              </button>
+              <button onClick={() => setConfirmRecipeDelete(null)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">
                 Cancelar
               </button>
             </div>
