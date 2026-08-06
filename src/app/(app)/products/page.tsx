@@ -559,7 +559,7 @@ export default function ProductsPage() {
     )
   }
 
-  const ingredients = products.filter(p => p.product_type !== 'receta')
+  const ingredients = products.filter(p => p.product_type !== 'receta' && p.is_sellable === false)
   const recipes = products.filter(p => p.product_type === 'receta')
   const finalProducts = products.filter(p => p.product_type !== 'receta' && p.is_sellable !== false)
   const ingredientProducts = products.filter(p => p.product_type !== 'receta' && p.is_sellable === false)
