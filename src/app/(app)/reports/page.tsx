@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import { useBranch } from '@/lib/branch-context'
 import { getProductCostMap, calculateCOGS } from '@/lib/cogs'
+import SaleDetailModal from '@/components/SaleDetailModal'
 
 type Period = 'today' | 'week' | 'month' | 'custom'
 
@@ -15,7 +16,9 @@ export default function ReportsPage() {
   const [saleItems, setSaleItems] = useState<any[]>([])
   const [cogs, setCogs] = useState(0)
   const [business, setBusiness] = useState<any>(null)
+  const [isOwner, setIsOwner] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [selectedSale, setSelectedSale] = useState<any>(null)
   const supabase = createClient()
   const { selectedBranchId } = useBranch()
 
@@ -46,8 +49,8 @@ export default function ReportsPage() {
     if (!user) { setLoading(false); return }
     let biz: any = null
     const { data: ob } = await supabase.from('businesses').select('*').eq('owner_id', user.id).single()
-    if (ob) biz = ob
-    else { const { data: pr } = await supabase.from('profiles').select('*, businesses(*)').eq('user_id', user.id).single(); if (pr) biz = pr.businesses }
+    if (ob) { biz = ob; setIsOwner(true) }
+    else { const { data: pr } = await supabase.from('profiles').select('*, businesses(*)').eq('user_id', user.id).single(); if (pr) { biz = pr.businesses; setIsOwner(pr.role === 'owner') } }
     if (!biz) { setLoading(false); return }
     setBusiness(biz)
 
@@ -69,34 +72,39 @@ export default function ReportsPage() {
     setSales(salesData)
     setExpenses(expensesRes.data || [])
 
-    const saleIds = salesData.map((s: any) => s.id)
+    // Solo contamos ventas completadas (no anuladas) para las métricas
+    const activeSales = salesData.filter((s: any) => s.status !== 'anulada')
+    const saleIds = activeSales.map((s: any) => s.id)
     let items: any[] = []
     if (saleIds.length > 0) {
       const { data: itemsData } = await supabase
         .from('sale_items')
-        .select('product_id, product_name, quantity, unit_price, subtotal, cost')
+        .select('product_id, product_name, quantity, unit_price, subtotal, cost, returned_quantity')
         .in('sale_id', saleIds)
       items = itemsData || []
     }
     setSaleItems(items)
 
-    // Costo real de lo vendido (incluye recetas: suma costo de cada ingrediente)
+    // Costo real de lo vendido (incluye recetas: suma costo de cada ingrediente), descontando lo devuelto
     const costMap = await getProductCostMap(supabase, biz.id)
-    setCogs(calculateCOGS(items, costMap))
+    const itemsForCogs = items.map((it: any) => ({ ...it, quantity: Number(it.quantity) - Number(it.returned_quantity || 0) }))
+    setCogs(calculateCOGS(itemsForCogs, costMap))
 
     setLoading(false)
   }
 
-  const totalSales = sales.reduce((s, v) => s + Number(v.total), 0)
+  const activeSales = sales.filter(s => s.status !== 'anulada')
+  const totalRefunds = activeSales.reduce((s, v) => s + Number(v.refunded_total || 0), 0)
+  const totalSales = activeSales.reduce((s, v) => s + Number(v.total), 0) - totalRefunds
   const totalExp = expenses.reduce((s, v) => s + Number(v.amount), 0)
   const gananciaBruta = totalSales - cogs
   const curr = business?.currency_symbol || '$'
 
-  const byMethod: Record<string, number> = { efectivo: 0, tarjeta: 0, transferencia: 0 }
-  sales.forEach(s => { byMethod[s.payment_method] = (byMethod[s.payment_method] || 0) + Number(s.total) })
+  const byMethod: Record<string, number> = { efectivo: 0, tarjeta: 0, transferencia: 0, mixto: 0 }
+  activeSales.forEach(s => { byMethod[s.payment_method] = (byMethod[s.payment_method] || 0) + Number(s.total) })
 
   const prodCount: Record<string, number> = {}
-  saleItems.forEach(p => { prodCount[p.product_name] = (prodCount[p.product_name] || 0) + Number(p.quantity) })
+  saleItems.forEach(p => { prodCount[p.product_name] = (prodCount[p.product_name] || 0) + (Number(p.quantity) - Number(p.returned_quantity || 0)) })
   const topProds: [string, number][] = Object.entries(prodCount).sort((a, b) => b[1] - a[1]).slice(0, 5)
   const maxProd: number = topProds.length ? topProds[0][1] : 1
 
@@ -127,10 +135,16 @@ export default function ReportsPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Total Ventas</p><p className="text-2xl font-bold text-primary-600">{curr}{totalSales.toFixed(0)}</p></div>
-        <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Transacciones</p><p className="text-2xl font-bold">{sales.length}</p></div>
+        <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Transacciones</p><p className="text-2xl font-bold">{activeSales.length}</p></div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Costo de Productos</p><p className="text-2xl font-bold text-orange-500">{curr}{cogs.toFixed(0)}</p></div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Gastos</p><p className="text-2xl font-bold text-red-500">{curr}{totalExp.toFixed(0)}</p></div>
       </div>
+
+      {totalRefunds > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3 text-sm text-orange-700 font-semibold">
+          ↩️ Devoluciones en este período: {curr}{totalRefunds.toFixed(2)} (ya restado del total de ventas)
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-3 mb-6">
         <div className="bg-white rounded-2xl p-5 shadow-sm border">
@@ -143,10 +157,10 @@ export default function ReportsPage() {
         <div className="bg-white rounded-2xl shadow-sm border p-6">
           <h2 className="font-semibold mb-4">💳 Ventas por Método</h2>
           <div className="space-y-3">
-            {Object.entries(byMethod).map(([m, v]) => {
+            {Object.entries(byMethod).filter(([, v]) => v > 0 || true).map(([m, v]) => {
               const pct = totalSales > 0 ? (v / totalSales * 100) : 0
-              const colors: any = { efectivo: 'bg-green-500', tarjeta: 'bg-blue-500', transferencia: 'bg-purple-500' }
-              const labels: any = { efectivo: '💵 Efectivo', tarjeta: '💳 Tarjeta', transferencia: '🏦 Transferencia' }
+              const colors: any = { efectivo: 'bg-green-500', tarjeta: 'bg-blue-500', transferencia: 'bg-purple-500', mixto: 'bg-gray-500' }
+              const labels: any = { efectivo: '💵 Efectivo', tarjeta: '💳 Tarjeta', transferencia: '🏦 Transferencia', mixto: '🔀 Mixto' }
               return (
                 <div key={m}>
                   <div className="flex justify-between text-sm mb-1"><span>{labels[m]}</span><span className="font-semibold">{curr}{Number(v).toFixed(2)} ({pct.toFixed(0)}%)</span></div>
@@ -181,13 +195,27 @@ export default function ReportsPage() {
               <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">Fecha</th>
               <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">Total</th>
               <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">Método</th>
+              <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">Estado</th>
+              <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500"></th>
             </tr></thead>
             <tbody className="divide-y">
               {sales.map(s => (
                 <tr key={s.id} className="hover:bg-gray-50">
                   <td className="px-3 py-2">{new Date(s.created_at).toLocaleDateString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
                   <td className="px-3 py-2 font-semibold">{curr}{Number(s.total).toFixed(2)}</td>
-                  <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${s.payment_method === 'efectivo' ? 'bg-green-100 text-green-700' : s.payment_method === 'tarjeta' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>{s.payment_method}</span></td>
+                  <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${s.payment_method === 'efectivo' ? 'bg-green-100 text-green-700' : s.payment_method === 'tarjeta' ? 'bg-blue-100 text-blue-700' : s.payment_method === 'mixto' ? 'bg-gray-200 text-gray-700' : 'bg-purple-100 text-purple-700'}`}>{s.payment_method}</span></td>
+                  <td className="px-3 py-2">
+                    {s.status === 'anulada' ? (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">Anulada</span>
+                    ) : Number(s.refunded_total) > 0 ? (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-700">Con devolución</span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">OK</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <button onClick={() => setSelectedSale(s)} className="text-primary-600 text-xs font-semibold">Ver</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -195,6 +223,16 @@ export default function ReportsPage() {
         </div>
         {sales.length === 0 && <p className="text-center text-gray-400 py-8">No hay ventas en este rango de fechas</p>}
       </div>
+
+      {selectedSale && (
+        <SaleDetailModal
+          sale={selectedSale}
+          isOwner={isOwner}
+          currency={curr}
+          onClose={() => setSelectedSale(null)}
+          onChanged={loadData}
+        />
+      )}
     </div>
   )
 }
