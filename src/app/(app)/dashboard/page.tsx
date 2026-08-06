@@ -72,7 +72,7 @@ export default function DashboardPage() {
     if (todaySaleIds.length > 0) {
       const { data: itemsData } = await supabase
         .from('sale_items')
-        .select('sale_id, product_id, quantity')
+        .select('sale_id, product_id, quantity, cost')
         .in('sale_id', todaySaleIds)
       items = itemsData || []
     }
