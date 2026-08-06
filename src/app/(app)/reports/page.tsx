@@ -74,7 +74,7 @@ export default function ReportsPage() {
     if (saleIds.length > 0) {
       const { data: itemsData } = await supabase
         .from('sale_items')
-        .select('product_id, product_name, quantity, unit_price, subtotal')
+        .select('product_id, product_name, quantity, unit_price, subtotal, cost')
         .in('sale_id', saleIds)
       items = itemsData || []
     }
