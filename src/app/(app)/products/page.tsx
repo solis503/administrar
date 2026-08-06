@@ -11,6 +11,7 @@ const FIELD_LABELS: Record<string, string> = {
   cost: 'Costo',
   stock: 'Stock / Cantidad',
   unit: 'Unidad',
+  category: 'Categoría (opcional)',
 }
 
 const AUTO_DETECT_HINTS: Record<string, string[]> = {
@@ -19,11 +20,13 @@ const AUTO_DETECT_HINTS: Record<string, string[]> = {
   cost: ['costo', 'cost'],
   stock: ['stock', 'cantidad', 'cant', 'existencia', 'quantity'],
   unit: ['unidad', 'unit'],
+  category: ['categoria', 'categoría', 'category'],
 }
 
 const RECIPE_FIELD_LABELS: Record<string, string> = {
   recipe: 'Nombre de la receta (obligatorio)',
   price: 'Precio de venta',
+  category: 'Categoría (opcional)',
   ingredient: 'Ingrediente (obligatorio)',
   quantity: 'Cantidad del ingrediente',
   unit: 'Unidad',
@@ -32,6 +35,7 @@ const RECIPE_FIELD_LABELS: Record<string, string> = {
 const RECIPE_AUTO_DETECT_HINTS: Record<string, string[]> = {
   recipe: ['receta', 'recipe', 'plato', 'combo'],
   price: ['precio', 'price', 'pvp', 'venta'],
+  category: ['categoria', 'categoría', 'category'],
   ingredient: ['ingrediente', 'ingredient', 'insumo'],
   quantity: ['cantidad', 'cant', 'quantity'],
   unit: ['unidad', 'unit'],
@@ -254,9 +258,19 @@ export default function ProductsPage() {
     loadData()
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('¿Eliminar?')) return
-    await supabase.from('products').delete().eq('id', id)
+  const [confirmDelete, setConfirmDelete] = useState<any>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const handleDelete = async () => {
+    if (!confirmDelete) return
+    setDeleting(true)
+    const { error } = await supabase.from('products').delete().eq('id', confirmDelete.id)
+    setDeleting(false)
+    if (error) {
+      alert('No se pudo eliminar: ' + error.message)
+      return
+    }
+    setConfirmDelete(null)
     loadData()
   }
 
@@ -398,6 +412,7 @@ export default function ProductsPage() {
         cost: columnMapping.cost ? parseNumber(row[columnMapping.cost]) : 0,
         stock: columnMapping.stock ? parseNumber(row[columnMapping.stock]) : 0,
         unit: columnMapping.unit ? String(row[columnMapping.unit] || 'piezas').trim() : 'piezas',
+        category: columnMapping.category ? String(row[columnMapping.category] || '').trim() || null : null,
         product_type: 'simple',
       })
     })
@@ -460,6 +475,7 @@ export default function ProductsPage() {
       // Buscar o crear el producto de tipo "receta"
       let recipeProduct = productByName.get(recipeName.toLowerCase())
       const price = columnMapping.price ? parseNumber(rows[0][columnMapping.price]) : 0
+      const category = columnMapping.category ? String(rows[0][columnMapping.category] || '').trim() || null : null
 
       if (recipeProduct && recipeProduct.product_type !== 'receta') {
         skipped.push(`${recipeName}: ya existe como producto simple, no se puede convertir en receta`)
@@ -474,6 +490,7 @@ export default function ProductsPage() {
             branch_id: targetBranchId,
             name: recipeName,
             price,
+            category,
             stock: 0,
             unit: 'piezas',
             product_type: 'receta',
@@ -487,8 +504,8 @@ export default function ProductsPage() {
         recipeProduct = created
         productByName.set(recipeName.toLowerCase(), created)
       } else {
-        // Ya existía la receta: actualizamos el precio y limpiamos sus ingredientes viejos
-        await supabase.from('products').update({ price }).eq('id', recipeProduct.id)
+        // Ya existía la receta: actualizamos el precio/categoría y limpiamos sus ingredientes viejos
+        await supabase.from('products').update({ price, category }).eq('id', recipeProduct.id)
         await supabase.from('recipe_items').delete().eq('product_id', recipeProduct.id)
       }
 
@@ -606,7 +623,7 @@ export default function ProductsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <button 
-                        onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }} 
+                        onClick={(e) => { e.stopPropagation(); setConfirmDelete(p) }} 
                         className="text-red-600 text-xs"
                       >
                         Eliminar
@@ -654,7 +671,7 @@ export default function ProductsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <button 
-                      onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }} 
+                      onClick={(e) => { e.stopPropagation(); setConfirmDelete(p) }} 
                       className="text-red-600 text-xs"
                     >
                       Eliminar
@@ -701,7 +718,7 @@ export default function ProductsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <button 
-                      onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }} 
+                      onClick={(e) => { e.stopPropagation(); setConfirmDelete(p) }} 
                       className="text-red-600 text-xs"
                     >
                       Eliminar
@@ -1006,6 +1023,24 @@ export default function ProductsPage() {
           </div>
         </div>
       )}
+
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center">
+            <p className="text-4xl mb-3">🗑️</p>
+            <h2 className="text-lg font-bold mb-1">¿Eliminar "{confirmDelete.name}"?</h2>
+            <p className="text-sm text-gray-500 mb-5">Esto no se puede deshacer.</p>
+            <div className="flex gap-3">
+              <button onClick={handleDelete} disabled={deleting} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl disabled:opacity-50">
+                {deleting ? 'Eliminando...' : 'Sí, eliminar'}
+              </button>
+              <button onClick={() => setConfirmDelete(null)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
-}
+            }
