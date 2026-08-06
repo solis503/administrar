@@ -14,6 +14,8 @@ export default function DashboardPage() {
   const [costMap, setCostMap] = useState<Record<string, number>>({})
   const [lowStock, setLowStock] = useState<any[]>([])
   const [recentSales, setRecentSales] = useState<any[]>([])
+  const [myProducts, setMyProducts] = useState<[string, number][]>([])
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const supabase = createClient()
   const { selectedBranchId, branches, canSwitchBranches } = useBranch()
 
@@ -23,6 +25,7 @@ export default function DashboardPage() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setLoading(false); return }
+    setCurrentUserId(user.id)
 
     const { data: profile } = await supabase
       .from('profiles')
@@ -63,23 +66,35 @@ export default function DashboardPage() {
       salesQuery, expensesQuery, productsQuery, recentSalesQuery,
     ])
 
-    setSalesToday(salesRes.data || [])
+    const activeToday = (salesRes.data || []).filter((s: any) => s.status !== 'anulada')
+    setSalesToday(activeToday)
     setExpensesToday(expensesRes.data || [])
     setRecentSales(recentSalesRes.data || [])
 
-    const todaySaleIds = (salesRes.data || []).map((s: any) => s.id)
+    const todaySaleIds = activeToday.map((s: any) => s.id)
     let items: any[] = []
     if (todaySaleIds.length > 0) {
       const { data: itemsData } = await supabase
         .from('sale_items')
-        .select('sale_id, product_id, quantity, cost')
+        .select('sale_id, product_id, product_name, quantity, cost, returned_quantity')
         .in('sale_id', todaySaleIds)
-      items = itemsData || []
+      items = (itemsData || []).map((it: any) => ({ ...it, quantity: Number(it.quantity) - Number(it.returned_quantity || 0) }))
     }
     setSaleItemsToday(items)
     const costMapResult = await getProductCostMap(supabase, biz.id)
     setCostMap(costMapResult)
     setCogsToday(calculateCOGS(items, costMapResult))
+
+    // Lo que el usuario actual anotó hoy (solo cantidades, sin montos), para que revise contra lo que entregó
+    const saleUserMap: Record<string, string> = {}
+    activeToday.forEach((s: any) => { saleUserMap[s.id] = s.user_id })
+    const myCounts: Record<string, number> = {}
+    items.forEach((it: any) => {
+      if (saleUserMap[it.sale_id] === user.id && it.quantity > 0) {
+        myCounts[it.product_name] = (myCounts[it.product_name] || 0) + it.quantity
+      }
+    })
+    setMyProducts(Object.entries(myCounts).sort((a, b) => a[0].localeCompare(b[0])))
 
     const allProducts = productsRes.data || []
     setLowStock(
@@ -93,7 +108,7 @@ export default function DashboardPage() {
   }
 
   const currency = business?.currency_symbol || '$'
-  const totalVentasHoy = salesToday.reduce((sum, s) => sum + Number(s.total || 0), 0)
+  const totalVentasHoy = salesToday.reduce((sum, s) => sum + Number(s.total || 0) - Number(s.refunded_total || 0), 0)
   const totalGastosHoy = expensesToday.reduce((sum, e) => sum + Number(e.amount || 0), 0)
   const ganancia = totalVentasHoy - cogsToday - totalGastosHoy
 
@@ -102,7 +117,7 @@ export default function DashboardPage() {
   const saleBranchMap: Record<string, string> = {}
   salesToday.forEach((s) => { saleBranchMap[s.id] = s.branch_id })
   const branchBreakdown = branches.map((b) => {
-    const ventas = salesToday.filter((s) => s.branch_id === b.id).reduce((sum, s) => sum + Number(s.total || 0), 0)
+    const ventas = salesToday.filter((s) => s.branch_id === b.id).reduce((sum, s) => sum + Number(s.total || 0) - Number(s.refunded_total || 0), 0)
     const gastos = expensesToday.filter((e) => e.branch_id === b.id).reduce((sum, e) => sum + Number(e.amount || 0), 0)
     const itemsDeSucursal = saleItemsToday.filter((it) => saleBranchMap[it.sale_id] === b.id)
     const costoProductos = calculateCOGS(itemsDeSucursal, costMap)
@@ -120,6 +135,22 @@ export default function DashboardPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">📊 Dashboard</h1>
+
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 mb-6">
+        <div className="p-4 border-b"><h2 className="font-semibold">📝 Lo que anotaste hoy <span className="text-xs font-normal text-gray-400">(cantidades, para que revises que no falte ni sobre nada)</span></h2></div>
+        {myProducts.length === 0 ? (
+          <div className="p-4 text-center text-gray-400 py-8">Todavía no has registrado ninguna venta hoy</div>
+        ) : (
+          <div className="divide-y">
+            {myProducts.map(([name, qty]) => (
+              <div key={name} className="p-4 flex justify-between items-center">
+                <span className="font-medium text-sm">{name}</span>
+                <span className="px-3 py-1 rounded-full text-sm font-bold bg-primary-100 text-primary-700">x{qty}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
