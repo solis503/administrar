@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import { useBranch } from '@/lib/branch-context'
+import { getRecipeAvailability } from '@/lib/recipeAvailability'
 
 export default function POSPage() {
   const [products, setProducts] = useState<any[]>([])
@@ -46,7 +47,10 @@ export default function POSPage() {
       setBusiness(biz)
       if (selectedBranchId) {
         const { data } = await supabase.from('products').select('*').eq('business_id', biz.id).eq('branch_id', selectedBranchId).eq('is_sellable', true).or('product_type.eq.receta,stock.gt.0')
-        setProducts(data || [])
+        const rawProducts = data || []
+        const recipeIds = rawProducts.filter(p => p.product_type === 'receta').map(p => p.id)
+        const availability = await getRecipeAvailability(supabase, recipeIds)
+        setProducts(rawProducts.map(p => p.product_type === 'receta' ? { ...p, stock: availability[p.id] || 0 } : p))
 
         const { data: shift } = await supabase
           .from('cash_shifts')
@@ -124,6 +128,7 @@ export default function POSPage() {
   }
 
   const addToCart = (product: any) => {
+    if (product.stock <= 0) return
     const existing = cart.find(i => i.id === product.id)
     if (existing) {
       if (existing.qty >= product.stock) return
@@ -338,7 +343,7 @@ export default function POSPage() {
         <div className="flex-1 overflow-y-auto pb-24 lg:pb-0">
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
             {filtered.map(p => (
-              <button key={p.id} onClick={() => addToCart(p)} className="bg-white rounded-xl p-3 border hover:border-primary-300 hover:shadow-md transition text-left flex flex-col">
+              <button key={p.id} onClick={() => addToCart(p)} disabled={p.product_type === 'receta' && p.stock <= 0} className="bg-white rounded-xl p-3 border hover:border-primary-300 hover:shadow-md transition text-left flex flex-col disabled:opacity-40 disabled:cursor-not-allowed">
                 <div className="w-full aspect-square rounded-lg bg-gray-100 mb-2 overflow-hidden flex items-center justify-center">
                   {p.image_url ? (
                     <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
@@ -347,7 +352,11 @@ export default function POSPage() {
                   )}
                 </div>
                 <p className="font-medium text-sm truncate">{p.name}</p>
-                {p.product_type === 'receta' && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full w-fit">🍽️</span>}
+                {p.product_type === 'receta' && (
+                  <span className={`text-xs px-2 py-0.5 rounded-full w-fit ${p.stock > 0 ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-600'}`}>
+                    🍽️ {p.stock > 0 ? `Alcanza para ${p.stock}` : 'Sin ingredientes'}
+                  </span>
+                )}
                 <p className="text-primary-600 font-bold mt-1">{curr}{p.price.toFixed(2)}</p>
               </button>
             ))}
@@ -585,4 +594,4 @@ export default function POSPage() {
       )}
     </div>
   )
-}
+              }
