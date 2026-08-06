@@ -30,6 +30,7 @@ export default function POSPage() {
   const [closingAmount, setClosingAmount] = useState('')
   const [expectedCash, setExpectedCash] = useState(0)
   const [closingShift, setClosingShift] = useState(false)
+  const [submittingSale, setSubmittingSale] = useState(false)
   const supabase = createClient()
   const { selectedBranchId, branches, canSwitchBranches } = useBranch()
 
@@ -185,15 +186,17 @@ export default function POSPage() {
 
   const completeSale = async () => {
     if (!business || !selectedBranchId || !currentShift) return
+    if (submittingSale) return
+    setSubmittingSale(true)
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    if (!user) { setSubmittingSale(false); return }
 
     let payments: { method: string; amount: number }[] = []
     let paid = 0
     let change = 0
 
     if (isMixedPayment) {
-      if (!mixedMatches) return
+      if (!mixedMatches) { setSubmittingSale(false); return }
       payments = [
         { method: 'efectivo', amount: parseFloat(mixedAmounts.efectivo) || 0 },
         { method: 'tarjeta', amount: parseFloat(mixedAmounts.tarjeta) || 0 },
@@ -220,7 +223,7 @@ export default function POSPage() {
       status: 'completada',
     }).select().single()
 
-    if (!sale) return
+    if (!sale) { setSubmittingSale(false); return }
 
     for (const p of payments) {
       await supabase.from('sale_payments').insert({ sale_id: sale.id, method: p.method, amount: p.amount })
@@ -252,6 +255,7 @@ export default function POSPage() {
     setCart([])
     setShowPayment(false)
     setShowSaleOk(true)
+    setSubmittingSale(false)
     loadData()
   }
 
@@ -539,7 +543,9 @@ export default function POSPage() {
             )}
 
             <div className="flex gap-3 mt-4">
-              <button onClick={completeSale} disabled={isMixedPayment && !mixedMatches} className="flex-1 py-3 bg-green-600 text-white font-bold rounded-xl disabled:opacity-50">✓ Confirmar</button>
+              <button onClick={completeSale} disabled={submittingSale || (isMixedPayment && !mixedMatches)} className="flex-1 py-3 bg-green-600 text-white font-bold rounded-xl disabled:opacity-50">
+                {submittingSale ? 'Procesando...' : '✓ Confirmar'}
+              </button>
               <button onClick={() => setShowPayment(false)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Cancelar</button>
             </div>
           </div>
@@ -594,4 +600,4 @@ export default function POSPage() {
       )}
     </div>
   )
-              }
+                                                     }
