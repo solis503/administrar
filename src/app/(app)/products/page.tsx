@@ -63,7 +63,7 @@ export default function ProductsPage() {
   const [business, setBusiness] = useState<any>(null)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<any>(null)
-  const [form, setForm] = useState({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: 'simple', image_url: '', category: '' })
+  const [form, setForm] = useState({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: 'simple', image_url: '', category: '', is_sellable: true })
   const [recipeItems, setRecipeItems] = useState<any[]>([])
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string>('')
@@ -115,9 +115,9 @@ export default function ProductsPage() {
 
   const curr = business ? business.currency_symbol : '$'
 
-  const openCreate = (type: string) => {
+  const openCreate = (type: string, sellable: boolean = true) => {
     setEditing(null)
-    setForm({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: type, image_url: '', category: '' })
+    setForm({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: type, image_url: '', category: '', is_sellable: sellable })
     setRecipeItems([])
     setImageFile(null)
     setImagePreview('')
@@ -135,6 +135,7 @@ export default function ProductsPage() {
       product_type: product.product_type,
       image_url: product.image_url || '',
       category: product.category || '',
+      is_sellable: product.is_sellable !== false,
     })
     setImageFile(null)
     setImagePreview(product.image_url || '')
@@ -216,6 +217,7 @@ export default function ProductsPage() {
       product_type: form.product_type,
       image_url: imageUrl || null,
       category: form.category.trim() || null,
+      is_sellable: form.product_type === 'receta' ? true : form.is_sellable,
     }
     
     let productId
@@ -538,6 +540,8 @@ export default function ProductsPage() {
 
   const ingredients = products.filter(p => p.product_type !== 'receta')
   const recipes = products.filter(p => p.product_type === 'receta')
+  const finalProducts = products.filter(p => p.product_type !== 'receta' && p.is_sellable !== false)
+  const ingredientProducts = products.filter(p => p.product_type !== 'receta' && p.is_sellable === false)
   const activeFields = importMode === 'recipes' ? RECIPE_FIELD_LABELS : FIELD_LABELS
 
   return (
@@ -551,8 +555,11 @@ export default function ProductsPage() {
           <button onClick={() => openImportModal('recipes')} className="bg-gray-100 text-gray-700 px-3 py-2 rounded-xl text-sm font-semibold border">
             🍽️ Importar Recetas
           </button>
-          <button onClick={() => openCreate('simple')} className="bg-blue-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
-            + Producto
+          <button onClick={() => openCreate('simple', true)} className="bg-blue-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
+            + Producto Final
+          </button>
+          <button onClick={() => openCreate('simple', false)} className="bg-teal-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
+            🧪 Ingrediente
           </button>
           <button onClick={() => openCreate('receta')} className="bg-orange-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
             🍽️ Receta
@@ -609,8 +616,8 @@ export default function ProductsPage() {
         </div>
       )}
 
-      <div>
-        <h2 className="text-lg font-semibold mb-3">📦 Productos</h2>
+      <div className="mb-6">
+        <h2 className="text-lg font-semibold mb-3">📦 Productos Finales <span className="text-xs font-normal text-gray-400">(aparecen en el Punto de Venta)</span></h2>
         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
           <table className="w-full">
             <thead className="bg-gray-50 border-b">
@@ -622,7 +629,7 @@ export default function ProductsPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {products.filter(p => p.product_type !== 'receta').map(p => (
+              {finalProducts.map(p => (
                 <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openEdit(p)}>
                   <td className="px-4 py-3 font-medium">
                     <div className="flex items-center gap-3">
@@ -653,6 +660,54 @@ export default function ProductsPage() {
               ))}
             </tbody>
           </table>
+          {finalProducts.length === 0 && <p className="text-center text-gray-400 py-6 text-sm">Sin productos finales todavía</p>}
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-lg font-semibold mb-3">🧪 Ingredientes <span className="text-xs font-normal text-gray-400">(solo para armar recetas, no aparecen en el Punto de Venta)</span></h2>
+        <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b">
+              <tr>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Ingrediente</th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Costo</th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Stock</th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {ingredientProducts.map(p => (
+                <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openEdit(p)}>
+                  <td className="px-4 py-3 font-medium">
+                    <div className="flex items-center gap-3">
+                      {p.image_url ? (
+                        <img src={p.image_url} alt={p.name} className="w-9 h-9 object-cover rounded-lg border flex-shrink-0" />
+                      ) : (
+                        <div className="w-9 h-9 rounded-lg bg-teal-50 flex items-center justify-center text-teal-300 text-sm flex-shrink-0">🧪</div>
+                      )}
+                      {p.name}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">{curr}{Number(p.cost || 0).toFixed(2)}</td>
+                  <td className="px-4 py-3">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-100 text-gray-600">
+                      {Number(p.stock)} {p.unit}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }} 
+                      className="text-red-600 text-xs"
+                    >
+                      Eliminar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {ingredientProducts.length === 0 && <p className="text-center text-gray-400 py-6 text-sm">Sin ingredientes todavía</p>}
         </div>
       </div>
 
@@ -660,7 +715,7 @@ export default function ProductsPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">
-              {editing ? '✏️ Editar' : '+ Nuevo'} {form.product_type === 'receta' ? 'Receta' : 'Producto'}
+              {editing ? '✏️ Editar' : '+ Nuevo'} {form.product_type === 'receta' ? 'Receta' : form.is_sellable ? 'Producto Final' : 'Ingrediente'}
             </h2>
             <div className="space-y-4">
               <div>
@@ -708,6 +763,20 @@ export default function ProductsPage() {
                   ))}
                 </datalist>
               </div>
+              {form.product_type === 'simple' && (
+                <label className="flex items-center gap-3 bg-gray-50 rounded-xl p-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.is_sellable}
+                    onChange={(e) => setForm({ ...form, is_sellable: e.target.checked })}
+                    className="w-5 h-5"
+                  />
+                  <div>
+                    <p className="text-sm font-medium">{form.is_sellable ? '📦 Producto Final' : '🧪 Ingrediente'}</p>
+                    <p className="text-xs text-gray-500">{form.is_sellable ? 'Se vende tal cual, aparece en el Punto de Venta' : 'Solo se usa para armar recetas, NO aparece en el Punto de Venta'}</p>
+                  </div>
+                </label>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-sm font-medium block mb-1">Precio</label>
