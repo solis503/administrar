@@ -29,6 +29,7 @@ export default function POSPage() {
   const [showCloseShift, setShowCloseShift] = useState(false)
   const [closingAmount, setClosingAmount] = useState('')
   const [expectedCash, setExpectedCash] = useState(0)
+  const [expensesInShift, setExpensesInShift] = useState(0)
   const [closingShift, setClosingShift] = useState(false)
   const [submittingSale, setSubmittingSale] = useState(false)
   const [saleError, setSaleError] = useState('')
@@ -103,7 +104,14 @@ export default function POSPage() {
       const { data: returns } = await supabase.from('sale_returns').select('total_amount').in('sale_id', saleIds)
       returnsSum = (returns || []).reduce((s, r) => s + Number(r.total_amount), 0)
     }
-    const expected = Number(currentShift.opening_amount) + cashSum - returnsSum
+    const { data: expenses } = await supabase
+      .from('expenses')
+      .select('amount')
+      .eq('branch_id', currentShift.branch_id)
+      .gte('created_at', currentShift.opened_at)
+    const expensesSum = (expenses || []).reduce((s, e) => s + Number(e.amount), 0)
+    setExpensesInShift(expensesSum)
+    const expected = Number(currentShift.opening_amount) + cashSum - returnsSum - expensesSum
     setExpectedCash(expected)
     setClosingAmount(expected.toFixed(2))
     setShowCloseShift(true)
@@ -574,6 +582,7 @@ export default function POSPage() {
             <p className="text-sm text-gray-500 mb-4">Contá el efectivo físico que hay en la caja ahorita y ponelo abajo.</p>
             <div className="bg-gray-50 rounded-xl p-4 mb-4 space-y-1 text-sm">
               <div className="flex justify-between"><span>Efectivo inicial</span><span>{curr}{Number(currentShift.opening_amount).toFixed(2)}</span></div>
+              {expensesInShift > 0 && <div className="flex justify-between text-red-600"><span>Gastos pagados de la caja</span><span>-{curr}{expensesInShift.toFixed(2)}</span></div>}
               <div className="flex justify-between font-bold border-t pt-1 mt-1"><span>Efectivo esperado en caja</span><span>{curr}{expectedCash.toFixed(2)}</span></div>
             </div>
             <label className="text-sm font-medium block mb-1">Efectivo contado</label>
@@ -615,4 +624,4 @@ export default function POSPage() {
       )}
     </div>
   )
-                                                                                           }
+}
