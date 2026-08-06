@@ -63,7 +63,7 @@ export default function ProductsPage() {
   const [business, setBusiness] = useState<any>(null)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<any>(null)
-  const [form, setForm] = useState({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: 'simple', image_url: '' })
+  const [form, setForm] = useState({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: 'simple', image_url: '', category: '' })
   const [recipeItems, setRecipeItems] = useState<any[]>([])
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string>('')
@@ -117,7 +117,7 @@ export default function ProductsPage() {
 
   const openCreate = (type: string) => {
     setEditing(null)
-    setForm({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: type, image_url: '' })
+    setForm({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: type, image_url: '', category: '' })
     setRecipeItems([])
     setImageFile(null)
     setImagePreview('')
@@ -134,6 +134,7 @@ export default function ProductsPage() {
       unit: product.unit,
       product_type: product.product_type,
       image_url: product.image_url || '',
+      category: product.category || '',
     })
     setImageFile(null)
     setImagePreview(product.image_url || '')
@@ -214,6 +215,7 @@ export default function ProductsPage() {
       unit: form.unit,
       product_type: form.product_type,
       image_url: imageUrl || null,
+      category: form.category.trim() || null,
     }
     
     let productId
@@ -630,6 +632,7 @@ export default function ProductsPage() {
                         <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-sm flex-shrink-0">📦</div>
                       )}
                       {p.name}
+                      {p.category && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{p.category}</span>}
                     </div>
                   </td>
                   <td className="px-4 py-3">{curr}{Number(p.price).toFixed(2)}</td>
@@ -689,6 +692,21 @@ export default function ProductsPage() {
                   className="w-full px-3 py-2 rounded-lg border" 
                   placeholder={form.product_type === 'receta' ? 'Ej: Licuado de Fresa' : 'Ej: Fresa'}
                 />
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-1">Categoría <span className="text-gray-400 font-normal">(opcional)</span></label>
+                <input
+                  value={form.category}
+                  onChange={(e) => setForm({ ...form, category: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border"
+                  placeholder="Ej: Comida, Extras, Frozen"
+                  list="category-suggestions"
+                />
+                <datalist id="category-suggestions">
+                  {Array.from(new Set(products.map(p => p.category).filter(Boolean))).map(c => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
