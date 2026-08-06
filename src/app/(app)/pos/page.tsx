@@ -161,7 +161,6 @@ export default function POSPage() {
                 <p className="font-medium text-sm truncate">{p.name}</p>
                 {p.product_type === 'receta' && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full w-fit">🍽️</span>}
                 <p className="text-primary-600 font-bold mt-1">{curr}{p.price.toFixed(2)}</p>
-                <p className="text-xs text-gray-400">Stock: {p.stock} {p.unit}</p>
               </button>
             ))}
           </div>
