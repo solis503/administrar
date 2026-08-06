@@ -86,10 +86,19 @@ export default function InventoryPage() {
     }
   }
 
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
   const deleteSelected = async () => {
     if (selected.length === 0) return
-    if (!confirm('¿Eliminar ' + selected.length + ' productos?')) return
-    await supabase.from('products').delete().in('id', selected)
+    setDeleting(true)
+    const { error } = await supabase.from('products').delete().in('id', selected)
+    setDeleting(false)
+    if (error) {
+      alert('No se pudo eliminar: ' + error.message)
+      return
+    }
+    setConfirmBulkDelete(false)
     setSelected([])
     loadData()
   }
@@ -136,7 +145,7 @@ export default function InventoryPage() {
         
         {selected.length > 0 && (
           <button 
-            onClick={deleteSelected} 
+            onClick={() => setConfirmBulkDelete(true)} 
             className="ml-auto px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold"
           >
             🗑️ Eliminar ({selected.length})
@@ -270,6 +279,24 @@ export default function InventoryPage() {
                 onClick={() => setShowMove(null)} 
                 className="px-6 py-3 bg-gray-100 rounded-xl font-semibold"
               >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmBulkDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center">
+            <p className="text-4xl mb-3">🗑️</p>
+            <h2 className="text-lg font-bold mb-1">¿Eliminar {selected.length} productos?</h2>
+            <p className="text-sm text-gray-500 mb-5">Esto no se puede deshacer.</p>
+            <div className="flex gap-3">
+              <button onClick={deleteSelected} disabled={deleting} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl disabled:opacity-50">
+                {deleting ? 'Eliminando...' : 'Sí, eliminar'}
+              </button>
+              <button onClick={() => setConfirmBulkDelete(false)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">
                 Cancelar
               </button>
             </div>
