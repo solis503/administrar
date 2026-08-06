@@ -80,7 +80,7 @@ function VerifyCodeForm() {
             <input
               type="text"
               inputMode="numeric"
-              maxLength={6}
+              maxLength={8}
               value={code}
               onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
               required
@@ -89,7 +89,7 @@ function VerifyCodeForm() {
               placeholder="000000"
             />
           </div>
-          <button type="submit" disabled={loading || code.length !== 6} className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg disabled:opacity-50">
+          <button type="submit" disabled={loading || code.length < 6} className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg disabled:opacity-50">
             {loading ? '...' : 'Verificar código'}
           </button>
         </form>
