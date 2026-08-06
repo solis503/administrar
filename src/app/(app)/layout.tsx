@@ -4,6 +4,7 @@ import Sidebar from '@/components/Sidebar'
 import { BranchProvider } from '@/lib/branch-context'
 import BranchSelector from '@/components/BranchSelector'
 import SubscriptionGate from '@/components/SubscriptionGate'
+import TrialWarningBanner from '@/components/TrialWarningBanner'
 import { computeSubscriptionStatus } from '@/lib/subscription'
 
 export const dynamic = 'force-dynamic'
@@ -80,6 +81,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <div className="mb-4">
               <BranchSelector />
             </div>
+            <TrialWarningBanner status={subStatus} isOwner={userRole === 'owner'} />
             <SubscriptionGate status={subStatus} businessId={businessData.id} isOwner={userRole === 'owner'}>
               {children}
             </SubscriptionGate>
