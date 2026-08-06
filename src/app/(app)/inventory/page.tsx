@@ -12,6 +12,7 @@ export default function InventoryPage() {
   const [filter, setFilter] = useState('all')
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<string[]>([])
+  const [selectedRecipes, setSelectedRecipes] = useState<string[]>([])
   const supabase = createClient()
   const { selectedBranchId } = useBranch()
 
@@ -87,19 +88,32 @@ export default function InventoryPage() {
   }
 
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
-  const [confirmRecipeDelete, setConfirmRecipeDelete] = useState<any>(null)
+  const [confirmRecipeDelete, setConfirmRecipeDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
-  const deleteRecipe = async () => {
-    if (!confirmRecipeDelete) return
+  const toggleSelectRecipe = (id: string) => {
+    setSelectedRecipes(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id])
+  }
+
+  const toggleAllRecipes = () => {
+    if (selectedRecipes.length === recipes.length) {
+      setSelectedRecipes([])
+    } else {
+      setSelectedRecipes(recipes.map(p => p.id))
+    }
+  }
+
+  const deleteRecipes = async () => {
+    if (selectedRecipes.length === 0) return
     setDeleting(true)
-    const { error } = await supabase.from('products').delete().eq('id', confirmRecipeDelete.id)
+    const { error } = await supabase.from('products').delete().in('id', selectedRecipes)
     setDeleting(false)
     if (error) {
       alert('No se pudo eliminar: ' + error.message)
       return
     }
-    setConfirmRecipeDelete(null)
+    setConfirmRecipeDelete(false)
+    setSelectedRecipes([])
     loadData()
   }
 
@@ -230,22 +244,45 @@ export default function InventoryPage() {
 
       {recipes.length > 0 && (
         <div className="mt-6">
-          <h2 className="text-lg font-semibold mb-3">🍽️ Recetas <span className="text-xs font-normal text-gray-400">(su disponibilidad se calcula sola según los ingredientes, no se ajusta a mano)</span></h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold">🍽️ Recetas <span className="text-xs font-normal text-gray-400">(su disponibilidad se calcula sola según los ingredientes, no se ajusta a mano)</span></h2>
+            {selectedRecipes.length > 0 && (
+              <button 
+                onClick={() => setConfirmRecipeDelete(true)} 
+                className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold"
+              >
+                🗑️ Eliminar ({selectedRecipes.length})
+              </button>
+            )}
+          </div>
           <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
             <table className="w-full">
               <thead className="bg-gray-50 border-b">
                 <tr>
+                  <th className="px-4 py-2 w-12">
+                    <input 
+                      type="checkbox" 
+                      checked={selectedRecipes.length === recipes.length && recipes.length > 0} 
+                      onChange={toggleAllRecipes} 
+                    />
+                  </th>
                   <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Receta</th>
                   <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Alcanza para</th>
                   <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Estado</th>
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500"></th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {recipes.map(p => {
                   const available = recipeAvailability[p.id] || 0
                   return (
-                    <tr key={p.id} className="hover:bg-gray-50">
+                    <tr key={p.id} className={`hover:bg-gray-50 ${selectedRecipes.includes(p.id) ? 'bg-blue-50' : ''}`}>
+                      <td className="px-4 py-3">
+                        <input 
+                          type="checkbox" 
+                          checked={selectedRecipes.includes(p.id)} 
+                          onChange={() => toggleSelectRecipe(p.id)} 
+                        />
+                      </td>
                       <td className="px-4 py-3 font-medium">🍽️ {p.name}</td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${available > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
@@ -253,11 +290,6 @@ export default function InventoryPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3">{available <= 0 ? '🔴' : available <= 3 ? '⚠️' : '✅'}</td>
-                      <td className="px-4 py-3">
-                        <button onClick={() => setConfirmRecipeDelete(p)} className="text-red-600 text-xs font-semibold">
-                          Eliminar
-                        </button>
-                      </td>
                     </tr>
                   )
                 })}
@@ -328,13 +360,13 @@ export default function InventoryPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center">
             <p className="text-4xl mb-3">🗑️</p>
-            <h2 className="text-lg font-bold mb-1">¿Eliminar "{confirmRecipeDelete.name}"?</h2>
+            <h2 className="text-lg font-bold mb-1">¿Eliminar {selectedRecipes.length} recetas?</h2>
             <p className="text-sm text-gray-500 mb-5">Esto no se puede deshacer.</p>
             <div className="flex gap-3">
-              <button onClick={deleteRecipe} disabled={deleting} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl disabled:opacity-50">
+              <button onClick={deleteRecipes} disabled={deleting} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl disabled:opacity-50">
                 {deleting ? 'Eliminando...' : 'Sí, eliminar'}
               </button>
-              <button onClick={() => setConfirmRecipeDelete(null)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">
+              <button onClick={() => setConfirmRecipeDelete(false)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">
                 Cancelar
               </button>
             </div>
