@@ -12,9 +12,8 @@ export default function DashboardPage() {
   const [saleItemsToday, setSaleItemsToday] = useState<any[]>([])
   const [cogsToday, setCogsToday] = useState(0)
   const [costMap, setCostMap] = useState<Record<string, number>>({})
-  const [lowStock, setLowStock] = useState<any[]>([])
   const [recentSales, setRecentSales] = useState<any[]>([])
-  const [myProducts, setMyProducts] = useState<[string, number][]>([])
+  const [myEntries, setMyEntries] = useState<{ name: string; qty: number; time: string }[]>([])
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const supabase = createClient()
   const { selectedBranchId, branches, canSwitchBranches } = useBranch()
@@ -52,18 +51,16 @@ export default function DashboardPage() {
 
     let salesQuery = supabase.from('sales').select('*').eq('business_id', biz.id).gte('created_at', startOfDay)
     let expensesQuery = supabase.from('expenses').select('*').eq('business_id', biz.id).gte('created_at', startOfDay)
-    let productsQuery = supabase.from('products').select('id, name, stock, min_stock, unit').eq('business_id', biz.id)
     let recentSalesQuery = supabase.from('sales').select('*').eq('business_id', biz.id).order('created_at', { ascending: false }).limit(5)
 
     if (selectedBranchId) {
       salesQuery = salesQuery.eq('branch_id', selectedBranchId)
       expensesQuery = expensesQuery.eq('branch_id', selectedBranchId)
-      productsQuery = productsQuery.eq('branch_id', selectedBranchId)
       recentSalesQuery = recentSalesQuery.eq('branch_id', selectedBranchId)
     }
 
-    const [salesRes, expensesRes, productsRes, recentSalesRes] = await Promise.all([
-      salesQuery, expensesQuery, productsQuery, recentSalesQuery,
+    const [salesRes, expensesRes, recentSalesRes] = await Promise.all([
+      salesQuery, expensesQuery, recentSalesQuery,
     ])
 
     const activeToday = (salesRes.data || []).filter((s: any) => s.status !== 'anulada')
@@ -85,24 +82,15 @@ export default function DashboardPage() {
     setCostMap(costMapResult)
     setCogsToday(calculateCOGS(items, costMapResult))
 
-    // Lo que el usuario actual anotó hoy (solo cantidades, sin montos), para que revise contra lo que entregó
+    // Lo que el usuario actual anotó hoy, en orden de hora (solo cantidades, sin montos)
     const saleUserMap: Record<string, string> = {}
-    activeToday.forEach((s: any) => { saleUserMap[s.id] = s.user_id })
-    const myCounts: Record<string, number> = {}
-    items.forEach((it: any) => {
-      if (saleUserMap[it.sale_id] === user.id && it.quantity > 0) {
-        myCounts[it.product_name] = (myCounts[it.product_name] || 0) + it.quantity
-      }
-    })
-    setMyProducts(Object.entries(myCounts).sort((a, b) => a[0].localeCompare(b[0])))
-
-    const allProducts = productsRes.data || []
-    setLowStock(
-      allProducts
-        .filter((p: any) => p.min_stock != null && Number(p.stock) <= Number(p.min_stock))
-        .sort((a: any, b: any) => Number(a.stock) - Number(b.stock))
-        .slice(0, 5)
-    )
+    const saleTimeMap: Record<string, string> = {}
+    activeToday.forEach((s: any) => { saleUserMap[s.id] = s.user_id; saleTimeMap[s.id] = s.created_at })
+    const myList = items
+      .filter((it: any) => saleUserMap[it.sale_id] === user.id && it.quantity > 0)
+      .map((it: any) => ({ name: it.product_name, qty: it.quantity, time: saleTimeMap[it.sale_id] }))
+      .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
+    setMyEntries(myList)
 
     setLoading(false)
   }
@@ -137,22 +125,25 @@ export default function DashboardPage() {
       <h1 className="text-2xl font-bold text-gray-900 mb-6">📊 Dashboard</h1>
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 mb-6">
-        <div className="p-4 border-b"><h2 className="font-semibold">📝 Lo que anotaste hoy <span className="text-xs font-normal text-gray-400">(cantidades, para que revises que no falte ni sobre nada)</span></h2></div>
-        {myProducts.length === 0 ? (
+        <div className="p-4 border-b"><h2 className="font-semibold">📝 Lo que anotaste hoy <span className="text-xs font-normal text-gray-400">(en orden, por hora en que se registró)</span></h2></div>
+        {myEntries.length === 0 ? (
           <div className="p-4 text-center text-gray-400 py-8">Todavía no has registrado ninguna venta hoy</div>
         ) : (
           <div className="divide-y">
-            {myProducts.map(([name, qty]) => (
-              <div key={name} className="p-4 flex justify-between items-center">
-                <span className="font-medium text-sm">{name}</span>
-                <span className="px-3 py-1 rounded-full text-sm font-bold bg-primary-100 text-primary-700">x{qty}</span>
+            {myEntries.map((entry, i) => (
+              <div key={i} className="p-4 flex justify-between items-center">
+                <div>
+                  <span className="font-medium text-sm">{entry.name}</span>
+                  <p className="text-xs text-gray-400">{new Date(entry.time).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}</p>
+                </div>
+                <span className="px-3 py-1 rounded-full text-sm font-bold bg-primary-100 text-primary-700">x{entry.qty}</span>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
           <p className="text-xs text-gray-500 mb-1">Ventas de Hoy</p>
           <p className="text-3xl font-bold text-blue-600">{currency}{totalVentasHoy.toFixed(2)}</p>
@@ -171,10 +162,6 @@ export default function DashboardPage() {
           <p className={`text-3xl font-bold ${ganancia >= 0 ? 'text-green-600' : 'text-red-500'}`}>
             {currency}{ganancia.toFixed(2)}
           </p>
-        </div>
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <p className="text-xs text-gray-500 mb-1">Alertas Stock</p>
-          <p className="text-3xl font-bold text-amber-600">{lowStock.length}</p>
         </div>
       </div>
 
@@ -196,45 +183,25 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
-          <div className="p-4 border-b"><h2 className="font-semibold">⚠️ Stock Bajo</h2></div>
-          {lowStock.length === 0 ? (
-            <div className="p-4 text-center text-gray-400 py-8">Sin alertas de stock</div>
-          ) : (
-            <div className="divide-y">
-              {lowStock.map((p) => (
-                <div key={p.id} className="p-4 flex justify-between items-center">
-                  <span className="font-medium text-sm">{p.name}</span>
-                  <span className="text-sm text-amber-600 font-semibold">
-                    {p.stock} {p.unit} <span className="text-gray-400 font-normal">/ mín {p.min_stock}</span>
-                  </span>
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
+        <div className="p-4 border-b"><h2 className="font-semibold">🧾 Últimas Ventas</h2></div>
+        {recentSales.length === 0 ? (
+          <div className="p-4 text-center text-gray-400 py-8">No hay ventas aún</div>
+        ) : (
+          <div className="divide-y">
+            {recentSales.map((s) => (
+              <div key={s.id} className="p-4 flex justify-between items-center">
+                <div>
+                  <p className="text-sm font-medium">{currency}{Number(s.total).toFixed(2)}</p>
+                  <p className="text-xs text-gray-400">{s.payment_method || 'N/A'}</p>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
-          <div className="p-4 border-b"><h2 className="font-semibold">🧾 Últimas Ventas</h2></div>
-          {recentSales.length === 0 ? (
-            <div className="p-4 text-center text-gray-400 py-8">No hay ventas aún</div>
-          ) : (
-            <div className="divide-y">
-              {recentSales.map((s) => (
-                <div key={s.id} className="p-4 flex justify-between items-center">
-                  <div>
-                    <p className="text-sm font-medium">{currency}{Number(s.total).toFixed(2)}</p>
-                    <p className="text-xs text-gray-400">{s.payment_method || 'N/A'}</p>
-                  </div>
-                  <span className="text-xs text-gray-400">
-                    {new Date(s.created_at).toLocaleString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                <span className="text-xs text-gray-400">
+                  {new Date(s.created_at).toLocaleString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
