@@ -2,52 +2,35 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import { useBranch } from '@/lib/branch-context'
+import { useBusiness } from '@/lib/business-context'
 import { getRecipeAvailability } from '@/lib/recipeAvailability'
 
 export default function InventoryPage() {
   const [products, setProducts] = useState<any[]>([])
   const [recipeAvailability, setRecipeAvailability] = useState<Record<string, number>>({})
-  const [business, setBusiness] = useState<any>(null)
   const [showMove, setShowMove] = useState<any>(null)
   const [filter, setFilter] = useState('all')
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<string[]>([])
   const [selectedRecipes, setSelectedRecipes] = useState<string[]>([])
   const supabase = createClient()
+  const { business, loading: businessLoading } = useBusiness()
   const { selectedBranchId } = useBranch()
 
   useEffect(() => {
-    loadData()
-  }, [selectedBranchId])
+    if (business) loadData()
+    else if (!businessLoading) setLoading(false)
+  }, [business, selectedBranchId])
 
   const loadData = async () => {
+    if (!business) return
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      setLoading(false)
-      return
-    }
-    
-    let biz: any = null
-    const { data: ob } = await supabase.from('businesses').select('*').eq('owner_id', user.id).single()
-    if (ob) {
-      biz = ob
-    } else {
-      const { data: pr } = await supabase.from('profiles').select('*, businesses(*)').eq('user_id', user.id).single()
-      if (pr && pr.businesses) {
-        biz = pr.businesses
-      }
-    }
-    
-    if (biz) {
-      setBusiness(biz)
-      let query = supabase.from('products').select('*').eq('business_id', biz.id).order('name')
-      if (selectedBranchId) query = query.eq('branch_id', selectedBranchId)
-      const { data: prods } = await query
-      setProducts(prods || [])
-      const recipeIds = (prods || []).filter(p => p.product_type === 'receta').map(p => p.id)
-      setRecipeAvailability(await getRecipeAvailability(supabase, recipeIds))
-    }
+    let query = supabase.from('products').select('*').eq('business_id', business.id).order('name')
+    if (selectedBranchId) query = query.eq('branch_id', selectedBranchId)
+    const { data: prods } = await query
+    setProducts(prods || [])
+    const recipeIds = (prods || []).filter(p => p.product_type === 'receta').map(p => p.id)
+    setRecipeAvailability(await getRecipeAvailability(supabase, recipeIds))
     setLoading(false)
   }
 
@@ -139,7 +122,7 @@ export default function InventoryPage() {
   })
   const recipes = products.filter(p => p.product_type === 'receta')
 
-  if (loading) {
+  if (businessLoading || loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin text-4xl">⏳</div>
