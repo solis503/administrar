@@ -56,35 +56,23 @@ export default async function AdminSubscriptionsPage() {
       <h1 className="text-2xl font-bold mb-6">🛠️ Comprobantes de Suscripción</h1>
 
       <div className="mb-8">
-        <h2 className="font-semibold mb-3 text-gray-700">⏳ Próximos a vencer (7 días)</h2>
+        <h2 className="font-semibold mb-1 text-gray-700">⏳ Próximos a vencer</h2>
+        <p className="text-xs text-gray-400 mb-3">Negocios cuyo plan o prueba gratis termina dentro de los próximos 7 días</p>
         {upcoming.length === 0 ? (
           <p className="text-gray-400 text-sm">Ningún negocio vence pronto.</p>
         ) : (
-          <div className="bg-white rounded-2xl border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b">
-                <tr>
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Negocio</th>
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Correo del dueño</th>
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Plan</th>
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Vence en</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {upcoming.map((u: any) => (
-                  <tr key={u.businessId}>
-                    <td className="px-4 py-3 font-medium">{u.name}</td>
-                    <td className="px-4 py-3 text-gray-600">{u.email}</td>
-                    <td className="px-4 py-3">{u.plan === 'trial' ? 'Prueba gratis' : u.plan === 'annual' ? 'Anual' : 'Mensual'}</td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${u.daysLeft <= 0 ? 'bg-red-100 text-red-700' : u.daysLeft <= 2 ? 'bg-orange-100 text-orange-700' : 'bg-amber-100 text-amber-700'}`}>
-                        {u.daysLeft <= 0 ? 'Vencido' : `${u.daysLeft} día${u.daysLeft === 1 ? '' : 's'}`}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="bg-white rounded-2xl border divide-y">
+            {upcoming.map((u: any) => (
+              <div key={u.businessId} className="p-4 flex flex-col sm:flex-row sm:items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium truncate">{u.name}</p>
+                  <p className="text-xs text-gray-500 truncate">{u.email} · {u.plan === 'trial' ? 'Prueba gratis' : u.plan === 'annual' ? 'Plan Anual' : 'Plan Mensual'}</p>
+                </div>
+                <span className={`self-start sm:self-auto flex-shrink-0 px-3 py-1 rounded-full text-xs font-bold ${u.daysLeft <= 0 ? 'bg-red-100 text-red-700' : u.daysLeft <= 2 ? 'bg-orange-100 text-orange-700' : 'bg-amber-100 text-amber-700'}`}>
+                  {u.daysLeft <= 0 ? 'Vencido' : `Vence en ${u.daysLeft} día${u.daysLeft === 1 ? '' : 's'}`}
+                </span>
+              </div>
+            ))}
           </div>
         )}
       </div>
