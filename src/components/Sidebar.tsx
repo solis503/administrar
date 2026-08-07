@@ -80,6 +80,7 @@ export default function Sidebar({ userName, businessName, userRole, isPlatformAd
     permissions.settings && { href: '/settings', label: 'Configuración', icon: '⚙️' },
     userRole === 'owner' && { href: '/subscription', label: 'Suscripción', icon: '💳' },
     isPlatformAdmin && { href: '/admin/subscriptions', label: 'Admin Suscripciones', icon: '🛠️' },
+    isPlatformAdmin && { href: '/admin/trials', label: 'Pruebas Gratis', icon: '⏳' },
   ].filter(Boolean) as { href: string; label: string; icon: string }[]
 
   const roleBadge: any = { 
