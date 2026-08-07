@@ -1,13 +1,14 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
+import { useBusiness } from '@/lib/business-context'
 
 export default function SettingsPage() {
-  const [business, setBusiness] = useState<any>(null)
   const [name, setName] = useState('')
   const [currency, setCurrency] = useState('$')
   const [tax, setTax] = useState('13')
   const [loyaltyRate, setLoyaltyRate] = useState('10')
+  const [showRecipeAvailability, setShowRecipeAvailability] = useState(true)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('general')
@@ -27,8 +28,12 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState({ text: '', type: '' })
   const supabase = createClient()
+  const { business, isOwner, loading: businessLoading, refreshBusiness } = useBusiness()
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => {
+    if (business) loadData()
+    else if (!businessLoading) setLoading(false)
+  }, [business])
 
   const showMessage = (text: string, type: string) => {
     setMessage({ text, type })
@@ -36,36 +41,31 @@ export default function SettingsPage() {
   }
 
   const loadData = async () => {
+    if (!business) return
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setLoading(false); return }
 
-    const { data: ownerBiz } = await supabase.from('businesses').select('*').eq('owner_id', user.id).single()
+    setName(business.name)
+    setCurrency(business.currency_symbol)
+    setTax(String(business.tax_percentage))
+    setLoyaltyRate(String(business.loyalty_points_rate || 10))
+    setShowRecipeAvailability(business.show_recipe_availability !== false)
 
-    if (ownerBiz) {
-      setBusiness(ownerBiz)
-      setName(ownerBiz.name)
-      setCurrency(ownerBiz.currency_symbol)
-      setTax(String(ownerBiz.tax_percentage))
-      setLoyaltyRate(String(ownerBiz.loyalty_points_rate || 10))
-      
-      const { data: profs } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('business_id', ownerBiz.id)
-        .order('created_at', { ascending: false })
-      
-      setProfiles(profs || [])
+    const { data: profs } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('business_id', business.id)
+      .order('created_at', { ascending: false })
 
-      const { data: brs } = await supabase
-        .from('branches')
-        .select('*')
-        .eq('business_id', ownerBiz.id)
-        .order('created_at', { ascending: true })
+    setProfiles(profs || [])
 
-      setBranches(brs || [])
-    }
-    
+    const { data: brs } = await supabase
+      .from('branches')
+      .select('*')
+      .eq('business_id', business.id)
+      .order('created_at', { ascending: true })
+
+    setBranches(brs || [])
+
     setLoading(false)
   }
 
@@ -113,7 +113,9 @@ export default function SettingsPage() {
       name, currency_symbol: currency,
       tax_percentage: parseFloat(tax) || 0,
       loyalty_points_rate: parseFloat(loyaltyRate) || 10,
+      show_recipe_availability: showRecipeAvailability,
     }).eq('id', business.id)
+    await refreshBusiness()
     setSaved(true)
     showMessage('✅ Cambios guardados', 'success')
     setTimeout(() => setSaved(false), 3000)
@@ -307,7 +309,7 @@ export default function SettingsPage() {
 );`
   }
 
-  if (loading) {
+  if (businessLoading || loading) {
     return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
   }
 
@@ -345,6 +347,18 @@ export default function SettingsPage() {
             <label className="text-sm font-medium block mb-2">IVA (%)</label>
             <input type="number" step="0.01" value={tax} onChange={(e) => setTax(e.target.value)} className="w-32 px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
+          <label className="flex items-center gap-3 bg-gray-50 rounded-xl p-4 cursor-pointer w-fit">
+            <input
+              type="checkbox"
+              checked={showRecipeAvailability}
+              onChange={(e) => setShowRecipeAvailability(e.target.checked)}
+              className="w-5 h-5"
+            />
+            <div>
+              <p className="text-sm font-medium">🍽️ Mostrar "Alcanza para X" en las recetas del Punto de Venta</p>
+              <p className="text-xs text-gray-500">Si lo apagás, tus empleados van a poder vender las recetas igual, pero sin ver cuántas unidades quedan</p>
+            </div>
+          </label>
           <button onClick={handleSave} className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl">
             {saved ? '✓ Guardado' : '💾 Guardar'}
           </button>
@@ -362,13 +376,15 @@ export default function SettingsPage() {
 
           <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
             {branches.map((b) => (
-              <div key={b.id} className="p-4 border-b hover:bg-gray-50 flex items-center gap-4">
-                <div className="w-12 h-12 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-lg">🏬</div>
-                <div className="flex-1">
-                  <p className="font-medium">{b.name}</p>
-                  <p className="text-sm text-gray-500">{b.address || 'Sin dirección'}{b.phone ? ` · ${b.phone}` : ''}</p>
+              <div key={b.id} className="p-4 border-b hover:bg-gray-50 flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-lg flex-shrink-0">🏬</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium">{b.name}</p>
+                    <p className="text-sm text-gray-500 truncate">{b.address || 'Sin dirección'}{b.phone ? ` · ${b.phone}` : ''}</p>
+                  </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap sm:ml-auto sm:flex-shrink-0">
                   <button onClick={() => openEditBranch(b)} className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-semibold hover:bg-blue-200">✏️ Editar</button>
                   <button onClick={() => handleToggleBranchActive(b.id, !b.active)} className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${b.active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                     {b.active ? 'Activa' : 'Inactiva'}
@@ -398,21 +414,23 @@ export default function SettingsPage() {
               const allowedModules = Object.entries(perms).filter(([k, v]) => v).map(([k]) => k).join(', ')
               return (
                 <div key={emp.id} className="p-4 border-b hover:bg-gray-50">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center text-lg font-medium">
-                      {(emp.full_name || emp.email || '?').charAt(0).toUpperCase()}
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center text-lg font-medium flex-shrink-0">
+                        {(emp.full_name || emp.email || '?').charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium">{emp.full_name || 'Sin nombre'}</p>
+                        <p className="text-sm text-gray-500 truncate">{emp.email}</p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          🏬 {branches.find((b) => b.id === emp.branch_id)?.name || 'Sin sucursal'} · <strong>Permisos:</strong> {allowedModules || 'Sin permisos'}
+                        </p>
+                      </div>
                     </div>
-                    <div className="flex-1">
-                      <p className="font-medium">{emp.full_name || 'Sin nombre'}</p>
-                      <p className="text-sm text-gray-500">{emp.email}</p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        🏬 {branches.find((b) => b.id === emp.branch_id)?.name || 'Sin sucursal'} · <strong>Permisos:</strong> {allowedModules || 'Sin permisos'}
-                      </p>
-                    </div>
-                    <span className={`px-3 py-1 rounded-full text-sm font-semibold ${emp.role === 'manager' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
-                      {emp.role === 'manager' ? 'Gerente' : 'Vendedor'}
-                    </span>
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-2 flex-wrap sm:ml-auto sm:flex-shrink-0">
+                      <span className={`px-3 py-1 rounded-full text-sm font-semibold ${emp.role === 'manager' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                        {emp.role === 'manager' ? 'Gerente' : 'Vendedor'}
+                      </span>
                       <button onClick={() => openEditEmployee(emp)} className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-semibold hover:bg-blue-200">✏️ Editar</button>
                       <button onClick={() => handleToggleActive(emp.id, !emp.active)} className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${emp.active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                         {emp.active ? 'Activo' : 'Inactivo'}
