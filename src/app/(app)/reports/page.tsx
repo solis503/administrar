@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import { useBranch } from '@/lib/branch-context'
+import { useBusiness } from '@/lib/business-context'
 import { getProductCostMap, calculateCOGS } from '@/lib/cogs'
 import SaleDetailModal from '@/components/SaleDetailModal'
 
@@ -15,14 +16,16 @@ export default function ReportsPage() {
   const [expenses, setExpenses] = useState<any[]>([])
   const [saleItems, setSaleItems] = useState<any[]>([])
   const [cogs, setCogs] = useState(0)
-  const [business, setBusiness] = useState<any>(null)
-  const [isOwner, setIsOwner] = useState(false)
   const [loading, setLoading] = useState(true)
   const [selectedSale, setSelectedSale] = useState<any>(null)
   const supabase = createClient()
+  const { business, isOwner, loading: businessLoading } = useBusiness()
   const { selectedBranchId } = useBranch()
 
-  useEffect(() => { loadData() }, [period, customFrom, customTo, selectedBranchId])
+  useEffect(() => {
+    if (business) loadData()
+    else if (!businessLoading) setLoading(false)
+  }, [business, period, customFrom, customTo, selectedBranchId])
 
   const getDateRange = () => {
     const now = new Date()
@@ -44,22 +47,15 @@ export default function ReportsPage() {
   }
 
   const loadData = async () => {
+    if (!business) return
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setLoading(false); return }
-    let biz: any = null
-    const { data: ob } = await supabase.from('businesses').select('*').eq('owner_id', user.id).single()
-    if (ob) { biz = ob; setIsOwner(true) }
-    else { const { data: pr } = await supabase.from('profiles').select('*, businesses(*)').eq('user_id', user.id).single(); if (pr) { biz = pr.businesses; setIsOwner(pr.role === 'owner') } }
-    if (!biz) { setLoading(false); return }
-    setBusiness(biz)
 
     const { since, until } = getDateRange()
 
-    let salesQuery = supabase.from('sales').select('*').eq('business_id', biz.id)
+    let salesQuery = supabase.from('sales').select('*').eq('business_id', business.id)
       .gte('created_at', since.toISOString()).lte('created_at', until.toISOString())
       .order('created_at', { ascending: false })
-    let expensesQuery = supabase.from('expenses').select('*').eq('business_id', biz.id)
+    let expensesQuery = supabase.from('expenses').select('*').eq('business_id', business.id)
       .gte('created_at', since.toISOString()).lte('created_at', until.toISOString())
 
     if (selectedBranchId) {
@@ -86,7 +82,7 @@ export default function ReportsPage() {
     setSaleItems(items)
 
     // Costo real de lo vendido (incluye recetas: suma costo de cada ingrediente), descontando lo devuelto
-    const costMap = await getProductCostMap(supabase, biz.id)
+    const costMap = await getProductCostMap(supabase, business.id)
     const itemsForCogs = items.map((it: any) => ({ ...it, quantity: Number(it.quantity) - Number(it.returned_quantity || 0) }))
     setCogs(calculateCOGS(itemsForCogs, costMap))
 
@@ -108,7 +104,7 @@ export default function ReportsPage() {
   const topProds: [string, number][] = Object.entries(prodCount).sort((a, b) => b[1] - a[1]).slice(0, 5)
   const maxProd: number = topProds.length ? topProds[0][1] : 1
 
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
+  if (businessLoading || loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
 
   return (
     <div>
