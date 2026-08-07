@@ -6,6 +6,7 @@ import BranchSelector from '@/components/BranchSelector'
 import SubscriptionGate from '@/components/SubscriptionGate'
 import TrialWarningBanner from '@/components/TrialWarningBanner'
 import { computeSubscriptionStatus } from '@/lib/subscription'
+import { BusinessProvider } from '@/lib/business-context'
 
 export const dynamic = 'force-dynamic'
 
@@ -76,17 +77,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         isPlatformAdmin={!!adminProfile}
       />
       <main className="flex-1 overflow-y-auto bg-gray-50">
-        <BranchProvider>
-          <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto">
-            <div className="mb-4">
-              <BranchSelector />
+        <BusinessProvider>
+          <BranchProvider>
+            <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto">
+              <div className="mb-4">
+                <BranchSelector />
+              </div>
+              <TrialWarningBanner status={subStatus} isOwner={userRole === 'owner'} />
+              <SubscriptionGate status={subStatus} businessId={businessData.id} isOwner={userRole === 'owner'}>
+                {children}
+              </SubscriptionGate>
             </div>
-            <TrialWarningBanner status={subStatus} isOwner={userRole === 'owner'} />
-            <SubscriptionGate status={subStatus} businessId={businessData.id} isOwner={userRole === 'owner'}>
-              {children}
-            </SubscriptionGate>
-          </div>
-        </BranchProvider>
+          </BranchProvider>
+        </BusinessProvider>
       </main>
     </div>
   )
