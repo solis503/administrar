@@ -3,6 +3,7 @@ import { useState, useEffect, Fragment } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import * as XLSX from 'xlsx'
 import { useBranch } from '@/lib/branch-context'
+import { useBusiness } from '@/lib/business-context'
 import { getRecipeAvailability } from '@/lib/recipeAvailability'
 
 const FIELD_LABELS: Record<string, string> = {
@@ -66,7 +67,6 @@ const findHeaderRowIndex = (aoa: any[][]): number => {
 export default function ProductsPage() {
   const [products, setProducts] = useState<any[]>([])
   const [recipeAvailability, setRecipeAvailability] = useState<Record<string, number>>({})
-  const [business, setBusiness] = useState<any>(null)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [form, setForm] = useState({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: 'simple', image_url: '', category: '', is_sellable: true })
@@ -84,40 +84,23 @@ export default function ProductsPage() {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<{ success: number; skipped: string[] }>({ success: 0, skipped: [] })
   const supabase = createClient()
+  const { business, loading: businessLoading } = useBusiness()
   const { selectedBranchId, branches, canSwitchBranches } = useBranch()
 
   useEffect(() => {
-    loadData()
-  }, [selectedBranchId])
+    if (business) loadData()
+    else if (!businessLoading) setLoading(false)
+  }, [business, selectedBranchId])
 
   const loadData = async () => {
+    if (!business) return
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      setLoading(false)
-      return
-    }
-    
-    let biz = null
-    const { data: ob } = await supabase.from('businesses').select('*').eq('owner_id', user.id).single()
-    if (ob) {
-      biz = ob
-    } else {
-      const { data: pr } = await supabase.from('profiles').select('*, businesses(*)').eq('user_id', user.id).single()
-      if (pr && pr.businesses) {
-        biz = pr.businesses
-      }
-    }
-    
-    if (biz) {
-      setBusiness(biz)
-      let query = supabase.from('products').select('*').eq('business_id', biz.id).order('name')
-      if (selectedBranchId) query = query.eq('branch_id', selectedBranchId)
-      const { data: prods } = await query
-      setProducts(prods || [])
-      const recipeIds = (prods || []).filter(p => p.product_type === 'receta').map(p => p.id)
-      setRecipeAvailability(await getRecipeAvailability(supabase, recipeIds))
-    }
+    let query = supabase.from('products').select('*').eq('business_id', business.id).order('name')
+    if (selectedBranchId) query = query.eq('branch_id', selectedBranchId)
+    const { data: prods } = await query
+    setProducts(prods || [])
+    const recipeIds = (prods || []).filter(p => p.product_type === 'receta').map(p => p.id)
+    setRecipeAvailability(await getRecipeAvailability(supabase, recipeIds))
     setLoading(false)
   }
 
@@ -575,7 +558,7 @@ export default function ProductsPage() {
     await loadData()
   }
 
-  if (loading) {
+  if (businessLoading || loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin text-4xl">⏳</div>
@@ -1105,4 +1088,4 @@ export default function ProductsPage() {
       )}
     </div>
   )
-                                   }
+}
