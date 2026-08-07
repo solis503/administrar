@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import { useBranch } from '@/lib/branch-context'
+import { useBusiness } from '@/lib/business-context'
 import { getRecipeAvailability } from '@/lib/recipeAvailability'
 
 export default function POSPage() {
@@ -21,7 +22,6 @@ export default function POSPage() {
   const [isMixedPayment, setIsMixedPayment] = useState(false)
   const [mixedAmounts, setMixedAmounts] = useState({ efectivo: '', tarjeta: '', transferencia: '' })
   const [saleResult, setSaleResult] = useState<any>(null)
-  const [business, setBusiness] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [currentShift, setCurrentShift] = useState<any>(null)
   const [openingAmount, setOpeningAmount] = useState('')
@@ -34,41 +34,37 @@ export default function POSPage() {
   const [submittingSale, setSubmittingSale] = useState(false)
   const [saleError, setSaleError] = useState('')
   const supabase = createClient()
+  const { business, loading: businessLoading } = useBusiness()
   const { selectedBranchId, branches, canSwitchBranches } = useBranch()
 
-  useEffect(() => { loadData() }, [selectedBranchId])
+  useEffect(() => {
+    if (business) loadData()
+    else if (!businessLoading) setLoading(false)
+  }, [business, selectedBranchId])
 
   const loadData = async () => {
+    if (!business) return
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    let biz: any = null
-    const { data: ob } = await supabase.from('businesses').select('*').eq('owner_id', user.id).single()
-    if (ob) biz = ob
-    else { const { data: pr } = await supabase.from('profiles').select('*, businesses(*)').eq('user_id', user.id).single(); if (pr) biz = pr.businesses }
-    if (biz) {
-      setBusiness(biz)
-      if (selectedBranchId) {
-        const { data } = await supabase.from('products').select('*').eq('business_id', biz.id).eq('branch_id', selectedBranchId).eq('is_sellable', true).or('product_type.eq.receta,stock.gt.0')
-        const rawProducts = data || []
-        const recipeIds = rawProducts.filter(p => p.product_type === 'receta').map(p => p.id)
-        const availability = await getRecipeAvailability(supabase, recipeIds)
-        setProducts(rawProducts.map(p => p.product_type === 'receta' ? { ...p, stock: availability[p.id] || 0 } : p))
+    if (selectedBranchId) {
+      const { data } = await supabase.from('products').select('*').eq('business_id', business.id).eq('branch_id', selectedBranchId).eq('is_sellable', true).or('product_type.eq.receta,stock.gt.0')
+      const rawProducts = data || []
+      const recipeIds = rawProducts.filter(p => p.product_type === 'receta').map(p => p.id)
+      const availability = await getRecipeAvailability(supabase, recipeIds)
+      setProducts(rawProducts.map(p => p.product_type === 'receta' ? { ...p, stock: availability[p.id] || 0 } : p))
 
-        const { data: shift } = await supabase
-          .from('cash_shifts')
-          .select('*')
-          .eq('business_id', biz.id)
-          .eq('branch_id', selectedBranchId)
-          .eq('status', 'open')
-          .order('opened_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-        setCurrentShift(shift || null)
-      } else {
-        setProducts([])
-        setCurrentShift(null)
-      }
+      const { data: shift } = await supabase
+        .from('cash_shifts')
+        .select('*')
+        .eq('business_id', business.id)
+        .eq('branch_id', selectedBranchId)
+        .eq('status', 'open')
+        .order('opened_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      setCurrentShift(shift || null)
+    } else {
+      setProducts([])
+      setCurrentShift(null)
     }
     setLoading(false)
   }
@@ -178,7 +174,7 @@ export default function POSPage() {
   }
 
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0)
-  const taxRate = business?.tax_percentage || 13
+  const taxRate = business?.tax_percentage != null ? Number(business.tax_percentage) : 13
   const tax = subtotal * (taxRate / 100)
   const total = subtotal + tax
   const curr = business?.currency_symbol || '$'
@@ -296,7 +292,7 @@ export default function POSPage() {
     .filter(p => !selectedCategory || p.category === selectedCategory)
   const cartCount = cart.reduce((s, i) => s + i.qty, 0)
 
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
+  if (businessLoading || loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
 
   if (!selectedBranchId) {
     return (
@@ -377,7 +373,7 @@ export default function POSPage() {
                   )}
                 </div>
                 <p className="font-medium text-sm truncate">{p.name}</p>
-                {p.product_type === 'receta' && (
+                {p.product_type === 'receta' && business?.show_recipe_availability !== false && (
                   <span className={`text-xs px-2 py-0.5 rounded-full w-fit ${p.stock > 0 ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-600'}`}>
                     🍽️ {p.stock > 0 ? `Alcanza para ${p.stock}` : 'Sin ingredientes'}
                   </span>
