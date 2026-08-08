@@ -18,6 +18,7 @@ export default function ReportsPage() {
   const [cogs, setCogs] = useState(0)
   const [loading, setLoading] = useState(true)
   const [selectedSale, setSelectedSale] = useState<any>(null)
+  const [tab, setTab] = useState<'resumen' | 'cantidades'>('resumen')
   const supabase = createClient()
   const { business, isOwner, loading: businessLoading } = useBusiness()
   const { selectedBranchId } = useBranch()
@@ -100,9 +101,17 @@ export default function ReportsPage() {
   activeSales.forEach(s => { byMethod[s.payment_method] = (byMethod[s.payment_method] || 0) + Number(s.total) })
 
   const prodCount: Record<string, number> = {}
-  saleItems.forEach(p => { prodCount[p.product_name] = (prodCount[p.product_name] || 0) + (Number(p.quantity) - Number(p.returned_quantity || 0)) })
+  const prodRevenue: Record<string, number> = {}
+  saleItems.forEach(p => {
+    const netQty = Number(p.quantity) - Number(p.returned_quantity || 0)
+    prodCount[p.product_name] = (prodCount[p.product_name] || 0) + netQty
+    prodRevenue[p.product_name] = (prodRevenue[p.product_name] || 0) + netQty * Number(p.unit_price)
+  })
   const topProds: [string, number][] = Object.entries(prodCount).sort((a, b) => b[1] - a[1]).slice(0, 5)
   const maxProd: number = topProds.length ? topProds[0][1] : 1
+  const allProdsSold = Object.entries(prodCount)
+    .map(([name, qty]) => ({ name, qty, revenue: prodRevenue[name] || 0 }))
+    .sort((a, b) => b.qty - a.qty)
 
   if (businessLoading || loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
 
@@ -129,11 +138,45 @@ export default function ReportsPage() {
         </div>
       )}
 
+      <div className="flex gap-2 mb-6">
+        <button onClick={() => setTab('resumen')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'resumen' ? 'bg-gray-900 text-white' : 'bg-white border hover:bg-gray-50'}`}>📊 Resumen</button>
+        <button onClick={() => setTab('cantidades')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'cantidades' ? 'bg-gray-900 text-white' : 'bg-white border hover:bg-gray-50'}`}>📦 Cantidades Vendidas</button>
+      </div>
+
+      {tab === 'cantidades' ? (
+        <div className="bg-white rounded-2xl shadow-sm border p-6">
+          <h2 className="font-semibold mb-4">📦 Cuánto se vendió de cada producto</h2>
+          {allProdsSold.length === 0 ? (
+            <p className="text-gray-400 text-center text-sm py-8">Sin ventas en este período</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b"><tr>
+                  <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">Producto</th>
+                  <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">Cantidad vendida</th>
+                  <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">Total generado</th>
+                </tr></thead>
+                <tbody className="divide-y">
+                  {allProdsSold.map((p) => (
+                    <tr key={p.name} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 font-medium">{p.name}</td>
+                      <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full text-xs font-bold bg-primary-100 text-primary-700">{p.qty}</span></td>
+                      <td className="px-3 py-2 font-semibold">{curr}{p.revenue.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : (
+      <>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-        <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Total Ventas</p><p className="text-2xl font-bold text-primary-600">{curr}{totalSales.toFixed(0)}</p></div>
+        <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Total Ventas</p><p className="text-2xl font-bold text-primary-600">{curr}{totalSales.toFixed(2)}</p></div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Transacciones</p><p className="text-2xl font-bold">{activeSales.length}</p></div>
-        <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Costo de Productos</p><p className="text-2xl font-bold text-orange-500">{curr}{cogs.toFixed(0)}</p></div>
-        <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Gastos</p><p className="text-2xl font-bold text-red-500">{curr}{totalExp.toFixed(0)}</p></div>
+        <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Costo de Productos</p><p className="text-2xl font-bold text-orange-500">{curr}{cogs.toFixed(2)}</p></div>
+        <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Gastos</p><p className="text-2xl font-bold text-red-500">{curr}{totalExp.toFixed(2)}</p></div>
       </div>
 
       {totalRefunds > 0 && (
@@ -219,6 +262,8 @@ export default function ReportsPage() {
         </div>
         {sales.length === 0 && <p className="text-center text-gray-400 py-8">No hay ventas en este rango de fechas</p>}
       </div>
+      </>
+      )}
 
       {selectedSale && (
         <SaleDetailModal
