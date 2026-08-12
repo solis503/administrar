@@ -9,6 +9,7 @@ export default function SettingsPage() {
   const [tax, setTax] = useState('13')
   const [loyaltyRate, setLoyaltyRate] = useState('10')
   const [showRecipeAvailability, setShowRecipeAvailability] = useState(true)
+  const [enableOpenOrders, setEnableOpenOrders] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('general')
@@ -49,6 +50,7 @@ export default function SettingsPage() {
     setTax(String(business.tax_percentage))
     setLoyaltyRate(String(business.loyalty_points_rate || 10))
     setShowRecipeAvailability(business.show_recipe_availability !== false)
+    setEnableOpenOrders(!!business.enable_open_orders)
 
     const { data: profs } = await supabase
       .from('profiles')
@@ -114,6 +116,7 @@ export default function SettingsPage() {
       tax_percentage: parseFloat(tax) || 0,
       loyalty_points_rate: parseFloat(loyaltyRate) || 10,
       show_recipe_availability: showRecipeAvailability,
+      enable_open_orders: enableOpenOrders,
     }).eq('id', business.id)
     await refreshBusiness()
     setSaved(true)
@@ -357,6 +360,18 @@ export default function SettingsPage() {
             <div>
               <p className="text-sm font-medium">🍽️ Mostrar "Alcanza para X" en las recetas del Punto de Venta</p>
               <p className="text-xs text-gray-500">Si lo apagás, tus empleados van a poder vender las recetas igual, pero sin ver cuántas unidades quedan</p>
+            </div>
+          </label>
+          <label className="flex items-center gap-3 bg-gray-50 rounded-xl p-4 cursor-pointer w-fit">
+            <input
+              type="checkbox"
+              checked={enableOpenOrders}
+              onChange={(e) => setEnableOpenOrders(e.target.checked)}
+              className="w-5 h-5"
+            />
+            <div>
+              <p className="text-sm font-medium">🧾 Cuentas pendientes y pedidos para recoger después</p>
+              <p className="text-xs text-gray-500">Para negocios de comida: anotá el pedido de un cliente sin cobrar todavía. El inventario se descuenta hasta que lo marqués como pagado/entregado. Agrega "Pedidos Pendientes" al menú.</p>
             </div>
           </label>
           <button onClick={handleSave} className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl">
