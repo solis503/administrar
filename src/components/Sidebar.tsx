@@ -4,7 +4,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-client'
 import { useState, useEffect } from 'react'
 
-export default function Sidebar({ userName, businessName, userRole, isPlatformAdmin = false }: { userName: string; businessName: string; userRole: string; isPlatformAdmin?: boolean }) {
+export default function Sidebar({ userName, businessName, userRole, isPlatformAdmin = false, enableOpenOrders = false }: { userName: string; businessName: string; userRole: string; isPlatformAdmin?: boolean; enableOpenOrders?: boolean }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -71,8 +71,8 @@ export default function Sidebar({ userName, businessName, userRole, isPlatformAd
   const navItems = [
     permissions.dashboard && { href: '/dashboard', label: 'Dashboard', icon: '📊' },
     permissions.pos && { href: '/pos', label: 'Punto de Venta', icon: '🛒' },
-    permissions.products && { href: '/products', label: 'Productos', icon: '📦' },
-    permissions.inventory && { href: '/inventory', label: 'Inventario', icon: '🏷️' },
+    enableOpenOrders && permissions.pos && { href: '/pedidos', label: 'Pedidos Pendientes', icon: '🧾' },
+    (permissions.inventory || permissions.products) && { href: '/inventory', label: 'Inventario', icon: '🏷️' },
     permissions.reports && { href: '/reports', label: 'Reportes', icon: '📈' },
     permissions.suppliers && { href: '/suppliers', label: 'Proveedores', icon: '🚚' },
     permissions.clients && { href: '/clients', label: 'Clientes', icon: '👥' },
