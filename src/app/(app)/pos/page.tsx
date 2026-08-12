@@ -33,6 +33,13 @@ export default function POSPage() {
   const [closingShift, setClosingShift] = useState(false)
   const [submittingSale, setSubmittingSale] = useState(false)
   const [saleError, setSaleError] = useState('')
+  const [showPendingModal, setShowPendingModal] = useState(false)
+  const [pendingCustomerName, setPendingCustomerName] = useState('')
+  const [pendingOrderType, setPendingOrderType] = useState<'cuenta' | 'pedido'>('cuenta')
+  const [pendingTime, setPendingTime] = useState('')
+  const [pendingNotes, setPendingNotes] = useState('')
+  const [savingPending, setSavingPending] = useState(false)
+  const [pendingError, setPendingError] = useState('')
   const supabase = createClient()
   const { business, loading: businessLoading } = useBusiness()
   const { selectedBranchId, branches, canSwitchBranches } = useBranch()
@@ -276,6 +283,64 @@ export default function POSPage() {
     }
   }
 
+  const openPendingModal = () => {
+    setPendingCustomerName('')
+    setPendingOrderType('cuenta')
+    setPendingTime('')
+    setPendingNotes('')
+    setPendingError('')
+    setShowPendingModal(true)
+  }
+
+  const saveAsPending = async () => {
+    if (!business || !selectedBranchId) return
+    if (!pendingCustomerName.trim()) { setPendingError('Ponele un nombre al cliente o a la mesa'); return }
+    if (cart.length === 0) { setPendingError('El carrito está vacío'); return }
+
+    setPendingError('')
+    setSavingPending(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('No se pudo confirmar tu sesión')
+
+      const { data: order, error: orderErr } = await supabase.from('open_orders').insert({
+        business_id: business.id,
+        branch_id: selectedBranchId,
+        order_type: pendingOrderType,
+        customer_name: pendingCustomerName.trim(),
+        pickup_time: pendingTime ? new Date(`${new Date().toISOString().split('T')[0]}T${pendingTime}`).toISOString() : null,
+        notes: pendingNotes.trim() || null,
+        status: 'pendiente',
+        subtotal,
+        tax_amount: tax,
+        total,
+        created_by: user.id,
+      }).select().single()
+
+      if (orderErr || !order) throw new Error(orderErr?.message || 'No se pudo guardar el pedido')
+
+      const itemInserts = cart.map(item =>
+        supabase.from('open_order_items').insert({
+          open_order_id: order.id,
+          product_id: item.isCustom ? null : item.id,
+          product_name: item.name,
+          quantity: item.qty,
+          unit_price: item.price,
+          cost: item.isCustom ? (item.cost || 0) : 0,
+          is_custom: !!item.isCustom,
+        })
+      )
+      await Promise.all(itemInserts)
+
+      setCart([])
+      setShowPendingModal(false)
+    } catch (err: any) {
+      setPendingError(err.message || 'No se pudo guardar el pedido')
+    } finally {
+      setSavingPending(false)
+    }
+  }
+
   const printTicket = () => {
     if (!saleResult || !business) return
     const items = saleResult.products.map((p: any) => `<tr><td style="padding:2px 0">${p.name} x${p.qty}</td><td style="text-align:right">${curr}${(p.price * p.qty).toFixed(2)}</td></tr>`).join('')
@@ -408,6 +473,9 @@ export default function POSPage() {
           {taxRate > 0 && <div className="flex justify-between text-sm text-gray-600"><span>IVA ({taxRate}%)</span><span>{curr}{tax.toFixed(2)}</span></div>}
           <div className="flex justify-between text-xl font-bold border-t pt-2"><span>Total</span><span>{curr}{total.toFixed(2)}</span></div>
           <button onClick={openPayment} disabled={cart.length === 0} className="w-full py-3 bg-primary-600 text-white font-bold rounded-xl mt-2 disabled:opacity-50">Cobrar {curr}{total.toFixed(2)}</button>
+          {business?.enable_open_orders && (
+            <button onClick={openPendingModal} disabled={cart.length === 0} className="w-full py-2.5 border-2 border-primary-300 text-primary-600 font-semibold rounded-xl disabled:opacity-50">🧾 Dejar pendiente</button>
+          )}
         </div>
       </div>
 
@@ -457,6 +525,9 @@ export default function POSPage() {
               {taxRate > 0 && <div className="flex justify-between text-sm text-gray-600"><span>IVA ({taxRate}%)</span><span>{curr}{tax.toFixed(2)}</span></div>}
               <div className="flex justify-between text-xl font-bold border-t pt-2"><span>Total</span><span>{curr}{total.toFixed(2)}</span></div>
               <button onClick={() => { setShowCartSheet(false); openPayment() }} disabled={cart.length === 0} className="w-full py-3 bg-primary-600 text-white font-bold rounded-xl mt-2 disabled:opacity-50">Cobrar {curr}{total.toFixed(2)}</button>
+              {business?.enable_open_orders && (
+                <button onClick={() => { setShowCartSheet(false); openPendingModal() }} disabled={cart.length === 0} className="w-full py-2.5 border-2 border-primary-300 text-primary-600 font-semibold rounded-xl disabled:opacity-50">🧾 Dejar pendiente</button>
+              )}
             </div>
           </div>
         </div>
@@ -504,6 +575,59 @@ export default function POSPage() {
             <div className="flex gap-3 mt-5">
               <button onClick={addCustomToCart} disabled={!customName.trim() || !customPrice} className="flex-1 py-3 bg-primary-600 text-white font-bold rounded-xl disabled:opacity-50">Agregar al carrito</button>
               <button onClick={() => { setShowCustomSale(false); setCustomName(''); setCustomCost(''); setCustomPrice('') }} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPendingModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6">
+            <h2 className="text-xl font-bold mb-1">🧾 Dejar pendiente</h2>
+            <p className="text-sm text-gray-500 mb-4">No se cobra ni se descuenta inventario todavía — eso pasa cuando lo finalicés en "Pedidos Pendientes".</p>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => setPendingOrderType('cuenta')} className={`py-2.5 rounded-xl border-2 font-semibold text-sm ${pendingOrderType === 'cuenta' ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-gray-200'}`}>🍽️ Cuenta en mesa</button>
+                <button onClick={() => setPendingOrderType('pedido')} className={`py-2.5 rounded-xl border-2 font-semibold text-sm ${pendingOrderType === 'pedido' ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-gray-200'}`}>📞 Pedido a recoger</button>
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-1">{pendingOrderType === 'cuenta' ? 'Nombre del cliente o mesa' : 'Nombre del cliente'}</label>
+                <input
+                  value={pendingCustomerName}
+                  onChange={e => setPendingCustomerName(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border outline-none"
+                  placeholder={pendingOrderType === 'cuenta' ? 'Ej: Mesa 3 / Juan' : 'Ej: María'}
+                  autoFocus
+                />
+              </div>
+              {pendingOrderType === 'pedido' && (
+                <div>
+                  <label className="text-sm font-medium block mb-1">Hora para recoger <span className="text-gray-400 font-normal">(opcional)</span></label>
+                  <input
+                    type="time"
+                    value={pendingTime}
+                    onChange={e => setPendingTime(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border outline-none"
+                  />
+                </div>
+              )}
+              <div>
+                <label className="text-sm font-medium block mb-1">Notas <span className="text-gray-400 font-normal">(opcional)</span></label>
+                <input
+                  value={pendingNotes}
+                  onChange={e => setPendingNotes(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border outline-none"
+                  placeholder="Ej: sin cebolla"
+                />
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3 flex justify-between font-bold"><span>Total</span><span>{curr}{total.toFixed(2)}</span></div>
+            </div>
+            {pendingError && <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-sm mt-3">{pendingError}</div>}
+            <div className="flex gap-3 mt-5">
+              <button onClick={saveAsPending} disabled={savingPending} className="flex-1 py-3 bg-primary-600 text-white font-bold rounded-xl disabled:opacity-50">
+                {savingPending ? 'Guardando...' : 'Guardar pendiente'}
+              </button>
+              <button onClick={() => setShowPendingModal(false)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">Cancelar</button>
             </div>
           </div>
         </div>
@@ -620,4 +744,4 @@ export default function POSPage() {
       )}
     </div>
   )
-}
+                                                                                                                         }
