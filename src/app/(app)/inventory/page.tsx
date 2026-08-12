@@ -1,21 +1,102 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { createClient } from '@/lib/supabase-client'
+import * as XLSX from 'xlsx'
 import { useBranch } from '@/lib/branch-context'
 import { useBusiness } from '@/lib/business-context'
 import { getRecipeAvailability } from '@/lib/recipeAvailability'
 
+const FIELD_LABELS: Record<string, string> = {
+  name: 'Nombre del producto (obligatorio)',
+  price: 'Precio de venta',
+  cost: 'Costo',
+  stock: 'Stock / Cantidad',
+  unit: 'Unidad',
+  category: 'Categoría (opcional)',
+}
+
+const AUTO_DETECT_HINTS: Record<string, string[]> = {
+  name: ['nombre', 'producto', 'name', 'product', 'descripcion', 'artículo', 'articulo'],
+  price: ['precio', 'price', 'pvp', 'venta'],
+  cost: ['costo', 'cost'],
+  stock: ['stock', 'cantidad', 'cant', 'existencia', 'quantity'],
+  unit: ['unidad', 'unit'],
+  category: ['categoria', 'categoría', 'category'],
+}
+
+const RECIPE_FIELD_LABELS: Record<string, string> = {
+  recipe: 'Nombre de la receta (obligatorio)',
+  price: 'Precio de venta',
+  category: 'Categoría (opcional)',
+  ingredient: 'Ingrediente (obligatorio)',
+  quantity: 'Cantidad del ingrediente',
+  unit: 'Unidad',
+}
+
+const RECIPE_AUTO_DETECT_HINTS: Record<string, string[]> = {
+  recipe: ['receta', 'recipe', 'plato', 'combo'],
+  price: ['precio', 'price', 'pvp', 'venta'],
+  category: ['categoria', 'categoría', 'category'],
+  ingredient: ['ingrediente', 'ingredient', 'insumo'],
+  quantity: ['cantidad', 'cant', 'quantity'],
+  unit: ['unidad', 'unit'],
+}
+
+// Busca la fila que más se parece a encabezados de tabla (nombre/precio/receta/ingrediente/etc.),
+// para saltar filas de reportes/metadatos que a veces vienen arriba del archivo real.
+const findHeaderRowIndex = (aoa: any[][]): number => {
+  const allHints = [...Object.values(AUTO_DETECT_HINTS).flat(), ...Object.values(RECIPE_AUTO_DETECT_HINTS).flat()]
+  let bestRow = 0
+  let bestScore = 0
+  const maxScan = Math.min(aoa.length, 25)
+  for (let i = 0; i < maxScan; i++) {
+    const row = aoa[i] || []
+    const nonEmptyCells = row.filter((c) => String(c ?? '').trim() !== '')
+    if (nonEmptyCells.length < 2) continue
+    const score = nonEmptyCells.filter((c) =>
+      allHints.some((hint) => String(c).toLowerCase().trim().includes(hint))
+    ).length
+    if (score > bestScore) {
+      bestScore = score
+      bestRow = i
+    }
+  }
+  return bestScore >= 2 ? bestRow : 0
+}
+
 export default function InventoryPage() {
   const [products, setProducts] = useState<any[]>([])
   const [recipeAvailability, setRecipeAvailability] = useState<Record<string, number>>({})
-  const [showMove, setShowMove] = useState<any>(null)
-  const [filter, setFilter] = useState('all')
   const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState<'all' | 'low' | 'out'>('all')
+
+  const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState<any>(null)
+  const [form, setForm] = useState({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: 'simple', image_url: '', category: '', is_sellable: true })
+  const [recipeItems, setRecipeItems] = useState<any[]>([])
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [imagePreview, setImagePreview] = useState<string>('')
+  const [uploadingImage, setUploadingImage] = useState(false)
+
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importMode, setImportMode] = useState<'products' | 'recipes'>('products')
+  const [importStep, setImportStep] = useState('upload')
+  const [importHeaders, setImportHeaders] = useState<string[]>([])
+  const [importRows, setImportRows] = useState<any[]>([])
+  const [columnMapping, setColumnMapping] = useState<Record<string, string>>({})
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<{ success: number; skipped: string[] }>({ success: 0, skipped: [] })
+
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState<string[]>([])
-  const [selectedRecipes, setSelectedRecipes] = useState<string[]>([])
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const [showMove, setShowMove] = useState<any>(null)
+
   const supabase = createClient()
   const { business, loading: businessLoading } = useBusiness()
-  const { selectedBranchId } = useBranch()
+  const { selectedBranchId, branches, canSwitchBranches } = useBranch()
 
   useEffect(() => {
     if (business) loadData()
@@ -34,70 +115,194 @@ export default function InventoryPage() {
     setLoading(false)
   }
 
-  const confirmMove = async () => {
-    if (!showMove || !business) return
-    const qtyInput = document.getElementById('mvQty') as HTMLInputElement
-    const notesInput = document.getElementById('mvNotes') as HTMLInputElement
-    const qty = parseFloat(qtyInput?.value) || 0
-    if (qty <= 0) return
-    
-    const notes = notesInput?.value || ''
-    const newStock = showMove.type === 'entrada' 
-      ? Number(showMove.product.stock) + qty 
-      : Math.max(0, Number(showMove.product.stock) - qty)
-    
-    await supabase.from('products').update({ stock: newStock }).eq('id', showMove.product.id)
-    await supabase.from('inventory_movements').insert({
-      business_id: business.id,
-      product_id: showMove.product.id,
-      type: showMove.type,
-      quantity: qty,
-      notes: notes || showMove.type,
+  const curr = business ? business.currency_symbol : '$'
+
+  // ---------- Crear / Editar producto ----------
+
+  const openCreate = (type: string, sellable: boolean = true) => {
+    setEditing(null)
+    setForm({ name: '', price: '', cost: '', stock: '', unit: 'piezas', product_type: type, image_url: '', category: '', is_sellable: sellable })
+    setRecipeItems([])
+    setImageFile(null)
+    setImagePreview('')
+    setShowForm(true)
+  }
+
+  const openEdit = async (product: any) => {
+    setEditing(product)
+    setForm({
+      name: product.name,
+      price: String(product.price),
+      cost: String(product.cost || ''),
+      stock: String(product.stock),
+      unit: product.unit,
+      product_type: product.product_type,
+      image_url: product.image_url || '',
+      category: product.category || '',
+      is_sellable: product.is_sellable !== false,
     })
-    setShowMove(null)
+    setImageFile(null)
+    setImagePreview(product.image_url || '')
+
+    if (product.product_type === 'receta') {
+      const { data } = await supabase
+        .from('recipe_items')
+        .select('*, products(name, unit)')
+        .eq('product_id', product.id)
+      setRecipeItems(data || [])
+    } else {
+      setRecipeItems([])
+    }
+
+    setShowForm(true)
+  }
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 5 * 1024 * 1024) {
+      alert('La imagen no puede pesar más de 5MB')
+      return
+    }
+    setImageFile(file)
+    setImagePreview(URL.createObjectURL(file))
+  }
+
+  const removeImage = () => {
+    setImageFile(null)
+    setImagePreview('')
+    setForm({ ...form, image_url: '' })
+  }
+
+  const uploadProductImage = async (file: File): Promise<string | null> => {
+    if (!business) return null
+    const ext = file.name.split('.').pop()
+    const path = `${business.id}/${crypto.randomUUID()}.${ext}`
+    const { error } = await supabase.storage.from('product-images').upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+    })
+    if (error) {
+      alert('No se pudo subir la imagen: ' + error.message)
+      return null
+    }
+    const { data } = supabase.storage.from('product-images').getPublicUrl(path)
+    return data.publicUrl
+  }
+
+  const handleSave = async () => {
+    if (!form.name || !business) return
+
+    const targetBranchId = editing
+      ? editing.branch_id
+      : (selectedBranchId || (branches.length === 1 ? branches[0].id : null))
+
+    if (!targetBranchId) {
+      alert('Elegí una sucursal específica arriba (no "Todas las sucursales") antes de crear un producto')
+      return
+    }
+
+    setUploadingImage(true)
+    let imageUrl = form.image_url
+    if (imageFile) {
+      const uploadedUrl = await uploadProductImage(imageFile)
+      if (uploadedUrl) imageUrl = uploadedUrl
+    }
+    setUploadingImage(false)
+
+    const productData = {
+      business_id: business.id,
+      branch_id: targetBranchId,
+      name: form.name,
+      price: parseFloat(form.price) || 0,
+      cost: parseFloat(form.cost) || 0,
+      stock: parseFloat(form.stock) || 0,
+      unit: form.unit,
+      product_type: form.product_type,
+      image_url: imageUrl || null,
+      category: form.category.trim() || null,
+      is_sellable: form.product_type === 'receta' ? true : form.is_sellable,
+    }
+
+    let productId
+
+    if (editing) {
+      await supabase.from('products').update(productData).eq('id', editing.id)
+      productId = editing.id
+
+      if (editing.product_type === 'receta') {
+        await supabase.from('recipe_items').delete().eq('product_id', editing.id)
+      }
+    } else {
+      const { data: newProduct } = await supabase.from('products').insert(productData).select().single()
+      productId = newProduct ? newProduct.id : ''
+    }
+
+    if (form.product_type === 'receta' && recipeItems.length > 0) {
+      for (const item of recipeItems) {
+        if (item.product_id && parseFloat(item.quantity) > 0) {
+          await supabase.from('recipe_items').insert({
+            product_id: productId,
+            ingredient_id: item.product_id,
+            quantity: parseFloat(item.quantity),
+          })
+        }
+      }
+    }
+
+    setShowForm(false)
     loadData()
+  }
+
+  const addRecipeIngredient = (ingredientId: string) => {
+    const ingredient = products.find(p => p.id === ingredientId)
+    if (!ingredient) return
+
+    setRecipeItems([...recipeItems, {
+      product_id: ingredientId,
+      name: ingredient.name,
+      unit: ingredient.unit,
+      quantity: '1',
+    }])
+  }
+
+  const removeRecipeIngredient = (index: number) => {
+    setRecipeItems(recipeItems.filter((_, i) => i !== index))
+  }
+
+  const updateRecipeQuantity = (index: number, quantity: string) => {
+    const newItems = [...recipeItems]
+    newItems[index].quantity = quantity
+    setRecipeItems(newItems)
+  }
+
+  // ---------- Agrupado por categoría / selección ----------
+
+  const toggleCategory = (key: string) => {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const groupByCategory = (list: any[]) => {
+    const groups = new Map<string, any[]>()
+    for (const p of list) {
+      const cat = p.category || 'Sin categoría'
+      if (!groups.has(cat)) groups.set(cat, [])
+      groups.get(cat)!.push(p)
+    }
+    return Array.from(groups.entries()).sort((a, b) => {
+      if (a[0] === 'Sin categoría') return 1
+      if (b[0] === 'Sin categoría') return -1
+      return a[0].localeCompare(b[0])
+    })
   }
 
   const toggleSelect = (id: string) => {
     setSelected(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id])
-  }
-
-  const toggleAll = () => {
-    if (selected.length === filtered.length) {
-      setSelected([])
-    } else {
-      setSelected(filtered.map(p => p.id))
-    }
-  }
-
-  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
-  const [confirmRecipeDelete, setConfirmRecipeDelete] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-
-  const toggleSelectRecipe = (id: string) => {
-    setSelectedRecipes(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id])
-  }
-
-  const toggleAllRecipes = () => {
-    if (selectedRecipes.length === recipes.length) {
-      setSelectedRecipes([])
-    } else {
-      setSelectedRecipes(recipes.map(p => p.id))
-    }
-  }
-
-  const deleteRecipes = async () => {
-    if (selectedRecipes.length === 0) return
-    setDeleting(true)
-    const { error } = await supabase.from('products').delete().in('id', selectedRecipes)
-    setDeleting(false)
-    if (error) {
-      alert('No se pudo eliminar: ' + error.message)
-      return
-    }
-    setConfirmRecipeDelete(false)
-    setSelectedRecipes([])
-    loadData()
   }
 
   const deleteSelected = async () => {
@@ -114,13 +319,281 @@ export default function InventoryPage() {
     loadData()
   }
 
-  const filtered = products.filter(p => {
-    if (p.product_type === 'receta') return false
-    if (filter === 'low') return Number(p.stock) <= Number(p.min_stock) && Number(p.stock) > 0
-    if (filter === 'out') return Number(p.stock) <= 0
-    return true
-  })
-  const recipes = products.filter(p => p.product_type === 'receta')
+  // ---------- Entrada / Salida de stock ----------
+
+  const confirmMove = async () => {
+    if (!showMove || !business) return
+    const qtyInput = document.getElementById('mvQty') as HTMLInputElement
+    const notesInput = document.getElementById('mvNotes') as HTMLInputElement
+    const qty = parseFloat(qtyInput?.value) || 0
+    if (qty <= 0) return
+
+    const notes = notesInput?.value || ''
+    const newStock = showMove.type === 'entrada'
+      ? Number(showMove.product.stock) + qty
+      : Math.max(0, Number(showMove.product.stock) - qty)
+
+    await supabase.from('products').update({ stock: newStock }).eq('id', showMove.product.id)
+    await supabase.from('inventory_movements').insert({
+      business_id: business.id,
+      product_id: showMove.product.id,
+      type: showMove.type,
+      quantity: qty,
+      notes: notes || showMove.type,
+    })
+    setShowMove(null)
+    loadData()
+  }
+
+  // ---------- Importar desde Excel ----------
+
+  const openImportModal = (mode: 'products' | 'recipes') => {
+    setImportMode(mode)
+    setImportStep('upload')
+    setImportHeaders([])
+    setImportRows([])
+    setColumnMapping({})
+    setImportResult({ success: 0, skipped: [] })
+    setShowImportModal(true)
+  }
+
+  const parseNumber = (value: any): number => {
+    if (value === undefined || value === null || value === '') return 0
+    const str = String(value).replace(/[^\d.-]/g, '')
+    const num = parseFloat(str)
+    return isNaN(num) ? 0 : num
+  }
+
+  const handleExcelFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = (evt) => {
+      try {
+        const data = evt.target?.result
+        const wb = XLSX.read(data, { type: 'array', cellDates: true })
+        const sheet = wb.Sheets[wb.SheetNames[0]]
+
+        const aoa: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false })
+        if (!aoa.length) {
+          alert('El archivo no tiene datos')
+          return
+        }
+
+        const headerRowIndex = findHeaderRowIndex(aoa)
+        const rawHeaders = aoa[headerRowIndex].map((h, i) => {
+          const clean = String(h ?? '').trim()
+          return clean || `Columna ${i + 1}`
+        })
+
+        const rows = aoa
+          .slice(headerRowIndex + 1)
+          .filter((r) => r.some((c) => String(c ?? '').trim() !== ''))
+          .map((r) => {
+            const obj: Record<string, any> = {}
+            rawHeaders.forEach((h, i) => { obj[h] = r[i] ?? '' })
+            return obj
+          })
+
+        if (!rows.length) {
+          alert('No se encontraron filas de productos después de los encabezados')
+          return
+        }
+
+        const headers = rawHeaders
+        setImportHeaders(headers)
+        setImportRows(rows)
+
+        const hints = importMode === 'recipes' ? RECIPE_AUTO_DETECT_HINTS : AUTO_DETECT_HINTS
+        const mapping: Record<string, string> = {}
+        for (const field of Object.keys(hints)) {
+          const match = headers.find((h) =>
+            hints[field].some((hint) => h.toLowerCase().trim().includes(hint))
+          )
+          if (match) mapping[field] = match
+        }
+        setColumnMapping(mapping)
+        setImportStep('map')
+      } catch (err: any) {
+        alert('No se pudo leer el archivo: ' + err.message)
+      }
+    }
+    reader.readAsArrayBuffer(file)
+    e.target.value = ''
+  }
+
+  const handleConfirmImport = async () => {
+    if (importMode === 'recipes') {
+      await handleConfirmRecipeImport()
+    } else {
+      await handleConfirmProductImport()
+    }
+  }
+
+  const handleConfirmProductImport = async () => {
+    if (!business || !importRows.length) return
+    if (!columnMapping.name) {
+      alert('Tenés que indicar cuál columna es el nombre del producto')
+      return
+    }
+    const targetBranchId = selectedBranchId || (branches.length === 1 ? branches[0].id : null)
+    if (!targetBranchId) {
+      alert('Elegí una sucursal específica arriba (no "Todas las sucursales") antes de importar')
+      return
+    }
+
+    setImporting(true)
+    const skipped: string[] = []
+    const toInsert: any[] = []
+
+    importRows.forEach((row, i) => {
+      const name = String(row[columnMapping.name] ?? '').trim()
+      if (!name) {
+        skipped.push(`Fila ${i + 2}: sin nombre, se omitió`)
+        return
+      }
+      toInsert.push({
+        business_id: business.id,
+        branch_id: targetBranchId,
+        name,
+        price: columnMapping.price ? parseNumber(row[columnMapping.price]) : 0,
+        cost: columnMapping.cost ? parseNumber(row[columnMapping.cost]) : 0,
+        stock: columnMapping.stock ? parseNumber(row[columnMapping.stock]) : 0,
+        unit: columnMapping.unit ? String(row[columnMapping.unit] || 'piezas').trim() : 'piezas',
+        category: columnMapping.category ? String(row[columnMapping.category] || '').trim() || null : null,
+        product_type: 'simple',
+      })
+    })
+
+    let successCount = 0
+    const chunkSize = 50
+    for (let i = 0; i < toInsert.length; i += chunkSize) {
+      const chunk = toInsert.slice(i, i + chunkSize)
+      const { error } = await supabase.from('products').insert(chunk)
+      if (error) {
+        chunk.forEach((p) => skipped.push(`${p.name}: ${error.message}`))
+      } else {
+        successCount += chunk.length
+      }
+    }
+
+    setImportResult({ success: successCount, skipped })
+    setImportStep('result')
+    setImporting(false)
+    await loadData()
+  }
+
+  const handleConfirmRecipeImport = async () => {
+    if (!business || !importRows.length) return
+    if (!columnMapping.recipe || !columnMapping.ingredient) {
+      alert('Tenés que indicar cuál columna es la receta y cuál es el ingrediente')
+      return
+    }
+    const targetBranchId = selectedBranchId || (branches.length === 1 ? branches[0].id : null)
+    if (!targetBranchId) {
+      alert('Elegí una sucursal específica arriba (no "Todas las sucursales") antes de importar')
+      return
+    }
+
+    setImporting(true)
+    const skipped: string[] = []
+
+    const { data: existingProducts } = await supabase
+      .from('products')
+      .select('id, name, product_type')
+      .eq('business_id', business.id)
+      .eq('branch_id', targetBranchId)
+    const productByName = new Map<string, any>(
+      (existingProducts || []).map((p) => [p.name.trim().toLowerCase(), p])
+    )
+
+    const groups = new Map<string, any[]>()
+    importRows.forEach((row) => {
+      const recipeName = String(row[columnMapping.recipe] ?? '').trim()
+      if (!recipeName) return
+      if (!groups.has(recipeName)) groups.set(recipeName, [])
+      groups.get(recipeName)!.push(row)
+    })
+
+    let successCount = 0
+
+    for (const [recipeName, rows] of Array.from(groups.entries())) {
+      let recipeProduct = productByName.get(recipeName.toLowerCase())
+      const price = columnMapping.price ? parseNumber(rows[0][columnMapping.price]) : 0
+      const category = columnMapping.category ? String(rows[0][columnMapping.category] || '').trim() || null : null
+
+      if (recipeProduct && recipeProduct.product_type !== 'receta') {
+        skipped.push(`${recipeName}: ya existe como producto simple, no se puede convertir en receta`)
+        continue
+      }
+
+      if (!recipeProduct) {
+        const { data: created, error } = await supabase
+          .from('products')
+          .insert({
+            business_id: business.id,
+            branch_id: targetBranchId,
+            name: recipeName,
+            price,
+            category,
+            stock: 0,
+            unit: 'piezas',
+            product_type: 'receta',
+          })
+          .select()
+          .single()
+        if (error || !created) {
+          skipped.push(`${recipeName}: no se pudo crear (${error?.message})`)
+          continue
+        }
+        recipeProduct = created
+        productByName.set(recipeName.toLowerCase(), created)
+      } else {
+        await supabase.from('products').update({ price, category }).eq('id', recipeProduct.id)
+        await supabase.from('recipe_items').delete().eq('product_id', recipeProduct.id)
+      }
+
+      const itemsToInsert: any[] = []
+      for (const row of rows) {
+        const ingredientName = String(row[columnMapping.ingredient] ?? '').trim()
+        if (!ingredientName) continue
+
+        const ingredientProduct = productByName.get(ingredientName.toLowerCase())
+        if (!ingredientProduct) {
+          skipped.push(`${recipeName}: ingrediente "${ingredientName}" no existe en tu inventario, importalo primero como producto`)
+          continue
+        }
+        if (ingredientProduct.id === recipeProduct.id) {
+          skipped.push(`${recipeName}: no puede ser ingrediente de sí misma`)
+          continue
+        }
+
+        itemsToInsert.push({
+          product_id: recipeProduct.id,
+          ingredient_id: ingredientProduct.id,
+          quantity: columnMapping.quantity ? parseNumber(row[columnMapping.quantity]) || 1 : 1,
+          unit: columnMapping.unit ? String(row[columnMapping.unit] || '').trim() : null,
+        })
+      }
+
+      if (itemsToInsert.length > 0) {
+        const { error } = await supabase.from('recipe_items').insert(itemsToInsert)
+        if (error) {
+          skipped.push(`${recipeName}: error guardando ingredientes (${error.message})`)
+        } else {
+          successCount++
+        }
+      } else {
+        skipped.push(`${recipeName}: no se le pudo agregar ningún ingrediente válido`)
+      }
+    }
+
+    setImportResult({ success: successCount, skipped })
+    setImportStep('result')
+    setImporting(false)
+    await loadData()
+  }
 
   if (businessLoading || loading) {
     return (
@@ -130,150 +603,106 @@ export default function InventoryPage() {
     )
   }
 
+  const ingredients = products.filter(p => p.product_type !== 'receta' && p.is_sellable === false)
+  const recipes = products.filter(p => p.product_type === 'receta')
+  const passesStockFilter = (p: any) => {
+    if (filter === 'low') return Number(p.stock) <= Number(p.min_stock) && Number(p.stock) > 0
+    if (filter === 'out') return Number(p.stock) <= 0
+    return true
+  }
+  const finalProducts = products.filter(p => p.product_type !== 'receta' && p.is_sellable !== false && passesStockFilter(p))
+  const ingredientProducts = products.filter(p => p.product_type !== 'receta' && p.is_sellable === false && passesStockFilter(p))
+  const activeFields = importMode === 'recipes' ? RECIPE_FIELD_LABELS : FIELD_LABELS
+
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">🏷️ Inventario</h1>
-      
-      <div className="flex gap-2 mb-4 flex-wrap items-center">
-        <button 
-          onClick={() => setFilter('all')} 
-          className={`px-4 py-2 rounded-xl text-sm font-semibold ${filter === 'all' ? 'bg-blue-600 text-white' : 'bg-white border'}`}
-        >
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <h1 className="text-2xl font-bold">🏷️ Inventario</h1>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={() => openImportModal('products')} className="bg-gray-100 text-gray-700 px-3 py-2 rounded-xl text-sm font-semibold border">
+            📥 Importar Productos
+          </button>
+          <button onClick={() => openImportModal('recipes')} className="bg-gray-100 text-gray-700 px-3 py-2 rounded-xl text-sm font-semibold border">
+            🍽️ Importar Recetas
+          </button>
+          <button onClick={() => openCreate('simple', true)} className="bg-blue-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
+            + Producto Final
+          </button>
+          <button onClick={() => openCreate('simple', false)} className="bg-teal-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
+            🧪 Ingrediente
+          </button>
+          <button onClick={() => openCreate('receta')} className="bg-orange-600 text-white px-3 py-2 rounded-xl text-sm font-semibold">
+            🍽️ Receta
+          </button>
+        </div>
+      </div>
+
+      <div className="flex gap-2 mb-6 flex-wrap items-center">
+        <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${filter === 'all' ? 'bg-gray-900 text-white' : 'bg-white border'}`}>
           Todos
         </button>
-        <button 
-          onClick={() => setFilter('low')} 
-          className={`px-4 py-2 rounded-xl text-sm font-semibold ${filter === 'low' ? 'bg-blue-600 text-white' : 'bg-white border'}`}
-        >
+        <button onClick={() => setFilter('low')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${filter === 'low' ? 'bg-gray-900 text-white' : 'bg-white border'}`}>
           ⚠️ Bajo
         </button>
-        <button 
-          onClick={() => setFilter('out')} 
-          className={`px-4 py-2 rounded-xl text-sm font-semibold ${filter === 'out' ? 'bg-blue-600 text-white' : 'bg-white border'}`}
-        >
+        <button onClick={() => setFilter('out')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${filter === 'out' ? 'bg-gray-900 text-white' : 'bg-white border'}`}>
           🔴 Sin Stock
         </button>
-        
+        <span className="text-xs text-gray-400">(el filtro de stock solo aplica a Productos Finales e Ingredientes)</span>
         {selected.length > 0 && (
-          <button 
-            onClick={() => setConfirmBulkDelete(true)} 
-            className="ml-auto px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold"
-          >
+          <button onClick={() => setConfirmBulkDelete(true)} className="ml-auto px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold">
             🗑️ Eliminar ({selected.length})
           </button>
         )}
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50 border-b">
-            <tr>
-              <th className="px-4 py-2 w-12">
-                <input 
-                  type="checkbox" 
-                  checked={selected.length === filtered.length && filtered.length > 0} 
-                  onChange={toggleAll} 
-                />
-              </th>
-              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Producto</th>
-              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Stock</th>
-              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Mínimo</th>
-              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Estado</th>
-              <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Acciones</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {filtered.map(p => (
-              <tr key={p.id} className={`hover:bg-gray-50 ${selected.includes(p.id) ? 'bg-blue-50' : ''}`}>
-                <td className="px-4 py-3">
-                  <input 
-                    type="checkbox" 
-                    checked={selected.includes(p.id)} 
-                    onChange={() => toggleSelect(p.id)} 
-                  />
-                </td>
-                <td className="px-4 py-3 font-medium">{p.name}</td>
-                <td className="px-4 py-3">
-                  <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">
-                    {Number(p.stock)} {p.unit}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-gray-600">{p.min_stock}</td>
-                <td className="px-4 py-3">
-                  {Number(p.stock) <= 0 ? '🔴' : Number(p.stock) <= p.min_stock ? '⚠️' : '✅'}
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex gap-1">
-                    <button 
-                      onClick={() => setShowMove({ type: 'entrada', product: p })} 
-                      className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-semibold"
-                    >
-                      + Entrada
-                    </button>
-                    <button 
-                      onClick={() => setShowMove({ type: 'salida', product: p })} 
-                      className="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-semibold"
-                    >
-                      - Salida
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {filtered.length === 0 && <p className="text-center text-gray-400 py-6 text-sm">Nada por aquí</p>}
-      </div>
-
       {recipes.length > 0 && (
-        <div className="mt-6">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold">🍽️ Recetas <span className="text-xs font-normal text-gray-400">(su disponibilidad se calcula sola según los ingredientes, no se ajusta a mano)</span></h2>
-            {selectedRecipes.length > 0 && (
-              <button 
-                onClick={() => setConfirmRecipeDelete(true)} 
-                className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold"
-              >
-                🗑️ Eliminar ({selectedRecipes.length})
-              </button>
-            )}
-          </div>
+        <div className="mb-6">
+          <h2 className="text-lg font-semibold mb-3">🍽️ Recetas <span className="text-xs font-normal text-gray-400">(disponibilidad calculada sola, no se ajusta a mano)</span></h2>
           <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
             <table className="w-full">
               <thead className="bg-gray-50 border-b">
                 <tr>
-                  <th className="px-4 py-2 w-12">
-                    <input 
-                      type="checkbox" 
-                      checked={selectedRecipes.length === recipes.length && recipes.length > 0} 
-                      onChange={toggleAllRecipes} 
-                    />
-                  </th>
+                  <th className="px-4 py-2 w-10"></th>
                   <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Receta</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Precio</th>
                   <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Alcanza para</th>
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Estado</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {recipes.map(p => {
-                  const available = recipeAvailability[p.id] || 0
+                {groupByCategory(recipes).map(([cat, items]) => {
+                  const key = `recipes:${cat}`
+                  const collapsed = collapsedCategories.has(key)
                   return (
-                    <tr key={p.id} className={`hover:bg-gray-50 ${selectedRecipes.includes(p.id) ? 'bg-blue-50' : ''}`}>
-                      <td className="px-4 py-3">
-                        <input 
-                          type="checkbox" 
-                          checked={selectedRecipes.includes(p.id)} 
-                          onChange={() => toggleSelectRecipe(p.id)} 
-                        />
-                      </td>
-                      <td className="px-4 py-3 font-medium">🍽️ {p.name}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${available > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-                          {available} unidades
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">{available <= 0 ? '🔴' : available <= 3 ? '⚠️' : '✅'}</td>
-                    </tr>
+                    <Fragment key={key}>
+                      <tr className="bg-gray-50 cursor-pointer" onClick={() => toggleCategory(key)}>
+                        <td colSpan={4} className="px-4 py-2 text-sm font-semibold text-gray-600">
+                          {collapsed ? '▶' : '▼'} {cat} <span className="text-gray-400 font-normal">({items.length})</span>
+                        </td>
+                      </tr>
+                      {!collapsed && items.map((p) => (
+                        <tr key={p.id} className={`hover:bg-gray-50 cursor-pointer ${selected.includes(p.id) ? 'bg-blue-50' : ''}`} onClick={() => openEdit(p)}>
+                          <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                            <input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggleSelect(p.id)} />
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              {p.image_url ? (
+                                <img src={p.image_url} alt={p.name} className="w-9 h-9 object-cover rounded-lg border flex-shrink-0" />
+                              ) : (
+                                <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-sm flex-shrink-0">🍽️</div>
+                              )}
+                              <span className="font-medium">{p.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">{curr}{Number(p.price).toFixed(2)}</td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${(recipeAvailability[p.id] || 0) > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                              {recipeAvailability[p.id] || 0} unidades
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -282,38 +711,395 @@ export default function InventoryPage() {
         </div>
       )}
 
+      <div className="mb-6">
+        <h2 className="text-lg font-semibold mb-3">📦 Productos Finales <span className="text-xs font-normal text-gray-400">(aparecen en el Punto de Venta)</span></h2>
+        <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b">
+              <tr>
+                <th className="px-4 py-2 w-10"></th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Producto</th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Precio</th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Stock</th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {groupByCategory(finalProducts).map(([cat, items]) => {
+                const key = `final:${cat}`
+                const collapsed = collapsedCategories.has(key)
+                return (
+                  <Fragment key={key}>
+                    <tr className="bg-gray-50 cursor-pointer" onClick={() => toggleCategory(key)}>
+                      <td colSpan={5} className="px-4 py-2 text-sm font-semibold text-gray-600">
+                        {collapsed ? '▶' : '▼'} {cat} <span className="text-gray-400 font-normal">({items.length})</span>
+                      </td>
+                    </tr>
+                    {!collapsed && items.map((p) => (
+                      <tr key={p.id} className={`hover:bg-gray-50 cursor-pointer ${selected.includes(p.id) ? 'bg-blue-50' : ''}`} onClick={() => openEdit(p)}>
+                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                          <input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggleSelect(p.id)} />
+                        </td>
+                        <td className="px-4 py-3 font-medium">
+                          <div className="flex items-center gap-3">
+                            {p.image_url ? (
+                              <img src={p.image_url} alt={p.name} className="w-9 h-9 object-cover rounded-lg border flex-shrink-0" />
+                            ) : (
+                              <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-sm flex-shrink-0">📦</div>
+                            )}
+                            {p.name}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">{curr}{Number(p.price).toFixed(2)}</td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${Number(p.stock) <= 0 ? 'bg-red-100 text-red-700' : Number(p.stock) <= p.min_stock ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+                            {Number(p.stock)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex gap-1">
+                            <button onClick={() => setShowMove({ type: 'entrada', product: p })} className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-semibold">
+                              + Entrada
+                            </button>
+                            <button onClick={() => setShowMove({ type: 'salida', product: p })} className="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-semibold">
+                              - Salida
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                )
+              })}
+            </tbody>
+          </table>
+          {finalProducts.length === 0 && <p className="text-center text-gray-400 py-6 text-sm">Sin productos finales todavía</p>}
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-lg font-semibold mb-3">🧪 Ingredientes <span className="text-xs font-normal text-gray-400">(solo para armar recetas, no aparecen en el Punto de Venta)</span></h2>
+        <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b">
+              <tr>
+                <th className="px-4 py-2 w-10"></th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Ingrediente</th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Costo</th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Stock</th>
+                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {groupByCategory(ingredientProducts).map(([cat, items]) => {
+                const key = `ing:${cat}`
+                const collapsed = collapsedCategories.has(key)
+                return (
+                  <Fragment key={key}>
+                    <tr className="bg-gray-50 cursor-pointer" onClick={() => toggleCategory(key)}>
+                      <td colSpan={5} className="px-4 py-2 text-sm font-semibold text-gray-600">
+                        {collapsed ? '▶' : '▼'} {cat} <span className="text-gray-400 font-normal">({items.length})</span>
+                      </td>
+                    </tr>
+                    {!collapsed && items.map((p) => (
+                      <tr key={p.id} className={`hover:bg-gray-50 cursor-pointer ${selected.includes(p.id) ? 'bg-blue-50' : ''}`} onClick={() => openEdit(p)}>
+                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                          <input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggleSelect(p.id)} />
+                        </td>
+                        <td className="px-4 py-3 font-medium">
+                          <div className="flex items-center gap-3">
+                            {p.image_url ? (
+                              <img src={p.image_url} alt={p.name} className="w-9 h-9 object-cover rounded-lg border flex-shrink-0" />
+                            ) : (
+                              <div className="w-9 h-9 rounded-lg bg-teal-50 flex items-center justify-center text-teal-300 text-sm flex-shrink-0">🧪</div>
+                            )}
+                            {p.name}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">{curr}{Number(p.cost || 0).toFixed(2)}</td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${Number(p.stock) <= 0 ? 'bg-red-100 text-red-700' : Number(p.stock) <= p.min_stock ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {Number(p.stock)} {p.unit}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex gap-1">
+                            <button onClick={() => setShowMove({ type: 'entrada', product: p })} className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-semibold">
+                              + Entrada
+                            </button>
+                            <button onClick={() => setShowMove({ type: 'salida', product: p })} className="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-semibold">
+                              - Salida
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                )
+              })}
+            </tbody>
+          </table>
+          {ingredientProducts.length === 0 && <p className="text-center text-gray-400 py-6 text-sm">Sin ingredientes todavía</p>}
+        </div>
+      </div>
+
+      {showForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">
+              {editing ? '✏️ Editar' : '+ Nuevo'} {form.product_type === 'receta' ? 'Receta' : form.is_sellable ? 'Producto Final' : 'Ingrediente'}
+            </h2>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium block mb-1">Foto (aparece al cobrar)</label>
+                {imagePreview ? (
+                  <div className="relative w-28 h-28">
+                    <img src={imagePreview} alt="Vista previa" className="w-28 h-28 object-cover rounded-xl border" />
+                    <button type="button" onClick={removeImage} className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full text-xs font-bold flex items-center justify-center">
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <label className="w-28 h-28 border-2 border-dashed rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:border-blue-400 hover:text-blue-500">
+                    <span className="text-2xl">📷</span>
+                    <span className="text-xs mt-1">Subir foto</span>
+                    <input type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
+                  </label>
+                )}
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-1">Nombre</label>
+                <input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border"
+                  placeholder={form.product_type === 'receta' ? 'Ej: Licuado de Fresa' : 'Ej: Fresa'}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-1">Categoría <span className="text-gray-400 font-normal">(opcional)</span></label>
+                <input
+                  value={form.category}
+                  onChange={(e) => setForm({ ...form, category: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border"
+                  placeholder="Ej: Comida, Extras, Frozen"
+                  list="category-suggestions"
+                />
+                <datalist id="category-suggestions">
+                  {Array.from(new Set(products.map(p => p.category).filter(Boolean))).map(c => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+              </div>
+              {form.product_type === 'simple' && (
+                <label className="flex items-center gap-3 bg-gray-50 rounded-xl p-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.is_sellable}
+                    onChange={(e) => setForm({ ...form, is_sellable: e.target.checked })}
+                    className="w-5 h-5"
+                  />
+                  <div>
+                    <p className="text-sm font-medium">{form.is_sellable ? '📦 Producto Final' : '🧪 Ingrediente'}</p>
+                    <p className="text-xs text-gray-500">{form.is_sellable ? 'Se vende tal cual, aparece en el Punto de Venta' : 'Solo se usa para armar recetas, NO aparece en el Punto de Venta'}</p>
+                  </div>
+                </label>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium block mb-1">Precio</label>
+                  <input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="w-full px-3 py-2 rounded-lg border" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium block mb-1">Costo</label>
+                  <input type="number" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} className="w-full px-3 py-2 rounded-lg border" />
+                </div>
+              </div>
+              {form.product_type !== 'receta' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm font-medium block mb-1">Stock</label>
+                    <input type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} className="w-full px-3 py-2 rounded-lg border" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium block mb-1">Unidad</label>
+                    <select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} className="w-full px-3 py-2 rounded-lg border">
+                      <option value="piezas">Piezas</option>
+                      <option value="kg">Kilogramos</option>
+                      <option value="litros">Litros</option>
+                      <option value="cajas">Cajas</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {form.product_type === 'receta' && (
+                <div className="border-t pt-4">
+                  <h3 className="font-semibold mb-3">🧩 Ingredientes</h3>
+                  {recipeItems.length === 0 && <p className="text-sm text-gray-500 mb-3">No hay ingredientes</p>}
+                  {recipeItems.map((item, index) => (
+                    <div key={index} className="flex items-center gap-2 bg-gray-50 rounded-lg p-3 mb-2">
+                      <span className="flex-1 font-medium">{item.name}</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={item.quantity}
+                        onChange={(e) => updateRecipeQuantity(index, e.target.value)}
+                        className="w-24 px-2 py-1 border rounded text-center"
+                      />
+                      <span className="text-sm text-gray-500">{item.unit}</span>
+                      <button onClick={() => removeRecipeIngredient(index)} className="text-red-500 font-bold">✕</button>
+                    </div>
+                  ))}
+                  <select
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        addRecipeIngredient(e.target.value)
+                        e.target.value = ''
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border"
+                    defaultValue=""
+                  >
+                    <option value="">Agregar ingrediente...</option>
+                    {ingredients.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button onClick={handleSave} disabled={uploadingImage} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl disabled:opacity-50">
+                {uploadingImage ? 'Subiendo foto...' : '💾 Guardar'}
+              </button>
+              <button onClick={() => setShowForm(false)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showImportModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">
+              {importMode === 'recipes' ? '🍽️ Importar Recetas desde Excel' : '📥 Importar Productos desde Excel'}
+            </h2>
+
+            {importStep === 'upload' && (
+              <div>
+                <p className="text-sm text-gray-600 mb-4">
+                  Subí un archivo .xlsx o .csv. La primera fila debe tener los encabezados de columna (por ejemplo: Nombre, Precio, Stock).
+                </p>
+                <input type="file" accept=".xlsx,.xls,.csv" onChange={handleExcelFile} className="w-full px-3 py-2 rounded-lg border" />
+              </div>
+            )}
+
+            {importStep === 'map' && (
+              <div>
+                <p className="text-sm text-gray-600 mb-4">
+                  Se encontraron <strong>{importRows.length}</strong> filas. Confirmá qué columna de tu archivo corresponde a cada campo:
+                </p>
+                <div className="space-y-3 mb-4">
+                  {Object.keys(activeFields).map((field) => (
+                    <div key={field} className="flex items-center gap-3">
+                      <label className="text-sm font-medium w-56">{activeFields[field]}</label>
+                      <select
+                        value={columnMapping[field] || ''}
+                        onChange={(e) => setColumnMapping({ ...columnMapping, [field]: e.target.value })}
+                        className="flex-1 px-3 py-2 rounded-lg border"
+                      >
+                        <option value="">-- No importar este campo --</option>
+                        {importHeaders.map((h) => (
+                          <option key={h} value={h}>{h}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="border rounded-xl overflow-hidden mb-4">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        {Object.keys(activeFields).map((field) => (
+                          <th key={field} className="text-left px-3 py-2 text-xs font-semibold text-gray-500">
+                            {activeFields[field].split(' (')[0]}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {importRows.slice(0, 5).map((row, i) => (
+                        <tr key={i}>
+                          {Object.keys(activeFields).map((field) => (
+                            <td key={field} className="px-3 py-2">
+                              {columnMapping[field] ? String(row[columnMapping[field]] ?? '') : <span className="text-gray-300">—</span>}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-gray-400 mb-4">Vista previa de las primeras 5 filas. Si no se ve como esperabas, ajustá el mapeo de columnas arriba.</p>
+
+                <div className="flex gap-3">
+                  <button onClick={handleConfirmImport} disabled={importing} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl disabled:opacity-50">
+                    {importing ? 'Importando...' : `✅ Importar ${importRows.length} filas`}
+                  </button>
+                  <button onClick={() => setImportStep('upload')} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">
+                    Volver
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {importStep === 'result' && (
+              <div>
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-4">
+                  <p className="font-semibold text-green-700">
+                    ✅ {importResult.success} {importMode === 'recipes' ? 'recetas importadas' : 'productos importados'} correctamente
+                  </p>
+                </div>
+                {importResult.skipped.length > 0 && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-4 max-h-48 overflow-y-auto">
+                    <p className="font-semibold text-yellow-700 mb-2">⚠️ {importResult.skipped.length} filas con problemas:</p>
+                    <ul className="text-sm text-yellow-700 list-disc pl-5 space-y-1">
+                      {importResult.skipped.map((s, i) => <li key={i}>{s}</li>)}
+                    </ul>
+                  </div>
+                )}
+                <button onClick={() => setShowImportModal(false)} className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl">
+                  Cerrar
+                </button>
+              </div>
+            )}
+
+            {importStep !== 'result' && (
+              <button onClick={() => setShowImportModal(false)} className="w-full mt-3 py-2 text-gray-500 text-sm font-semibold">
+                Cancelar
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {showMove && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-6">
-            <h2 className="text-xl font-bold mb-3">
-              {showMove.type === 'entrada' ? '📥 Entrada' : '📤 Salida'}
-            </h2>
-            <p className="mb-3">
-              {showMove.product.name} | Stock: {showMove.product.stock}
-            </p>
-            <input 
-              id="mvQty" 
-              type="number" 
-              className="w-full px-4 py-3 rounded-xl border mb-3" 
-              placeholder="Cantidad" 
-            />
-            <input 
-              id="mvNotes" 
-              type="text" 
-              className="w-full px-4 py-3 rounded-xl border mb-3" 
-              placeholder="Notas" 
-            />
+            <h2 className="text-xl font-bold mb-3">{showMove.type === 'entrada' ? '📥 Entrada' : '📤 Salida'}</h2>
+            <p className="mb-3">{showMove.product.name} | Stock: {showMove.product.stock}</p>
+            <input id="mvQty" type="number" className="w-full px-4 py-3 rounded-xl border mb-3" placeholder="Cantidad" />
+            <input id="mvNotes" type="text" className="w-full px-4 py-3 rounded-xl border mb-3" placeholder="Notas" />
             <div className="flex gap-3">
-              <button 
-                onClick={confirmMove} 
-                className={`flex-1 py-3 font-bold rounded-xl text-white ${showMove.type === 'entrada' ? 'bg-green-600' : 'bg-red-600'}`}
-              >
+              <button onClick={confirmMove} className={`flex-1 py-3 font-bold rounded-xl text-white ${showMove.type === 'entrada' ? 'bg-green-600' : 'bg-red-600'}`}>
                 Confirmar
               </button>
-              <button 
-                onClick={() => setShowMove(null)} 
-                className="px-6 py-3 bg-gray-100 rounded-xl font-semibold"
-              >
+              <button onClick={() => setShowMove(null)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">
                 Cancelar
               </button>
             </div>
@@ -325,8 +1111,8 @@ export default function InventoryPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center">
             <p className="text-4xl mb-3">🗑️</p>
-            <h2 className="text-lg font-bold mb-1">¿Eliminar {selected.length} productos?</h2>
-            <p className="text-sm text-gray-500 mb-5">Esto no se puede deshacer.</p>
+            <h2 className="text-lg font-bold mb-1">¿Eliminar {selected.length} elementos?</h2>
+            <p className="text-sm text-gray-500 mb-5">Puede incluir recetas, productos finales o ingredientes. Esto no se puede deshacer.</p>
             <div className="flex gap-3">
               <button onClick={deleteSelected} disabled={deleting} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl disabled:opacity-50">
                 {deleting ? 'Eliminando...' : 'Sí, eliminar'}
@@ -338,25 +1124,6 @@ export default function InventoryPage() {
           </div>
         </div>
       )}
-
-      {confirmRecipeDelete && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center">
-            <p className="text-4xl mb-3">🗑️</p>
-            <h2 className="text-lg font-bold mb-1">¿Eliminar {selectedRecipes.length} recetas?</h2>
-            <p className="text-sm text-gray-500 mb-5">Esto no se puede deshacer.</p>
-            <div className="flex gap-3">
-              <button onClick={deleteRecipes} disabled={deleting} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl disabled:opacity-50">
-                {deleting ? 'Eliminando...' : 'Sí, eliminar'}
-              </button>
-              <button onClick={() => setConfirmRecipeDelete(false)} className="px-6 py-3 bg-gray-100 rounded-xl font-semibold">
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
-}
-              
+      }         
