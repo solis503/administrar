@@ -75,6 +75,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         businessName={businessData?.name || 'Mi Negocio'}
         userRole={userRole}
         isPlatformAdmin={!!adminProfile}
+        enableOpenOrders={!!businessData?.enable_open_orders}
       />
       <main className="flex-1 overflow-y-auto bg-gray-50">
         <BusinessProvider>
