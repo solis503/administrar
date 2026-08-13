@@ -3,13 +3,16 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-client'
 import { useState, useEffect } from 'react'
+import { useBusiness } from '@/lib/business-context'
 
-export default function Sidebar({ userName, businessName, userRole, isPlatformAdmin = false, enableOpenOrders = false }: { userName: string; businessName: string; userRole: string; isPlatformAdmin?: boolean; enableOpenOrders?: boolean }) {
+export default function Sidebar({ userName, initialBusinessName, userRole, isPlatformAdmin = false, enableOpenOrders = false }: { userName: string; initialBusinessName: string; userRole: string; isPlatformAdmin?: boolean; enableOpenOrders?: boolean }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [permissions, setPermissions] = useState<any>(null)
+  const { business } = useBusiness()
+  const businessName = business?.name || initialBusinessName
 
   useEffect(() => { 
     loadPermissions() 
