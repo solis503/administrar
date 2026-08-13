@@ -69,16 +69,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .from('profiles').select('is_platform_admin').eq('user_id', user.id).eq('is_platform_admin', true).maybeSingle()
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar
-        userName={user.email || 'Usuario'}
-        businessName={businessData?.name || 'Mi Negocio'}
-        userRole={userRole}
-        isPlatformAdmin={!!adminProfile}
-        enableOpenOrders={!!businessData?.enable_open_orders}
-      />
-      <main className="flex-1 overflow-y-auto bg-gray-50">
-        <BusinessProvider>
+    <BusinessProvider>
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar
+          userName={user.email || 'Usuario'}
+          initialBusinessName={businessData?.name || 'Mi Negocio'}
+          userRole={userRole}
+          isPlatformAdmin={!!adminProfile}
+          enableOpenOrders={!!businessData?.enable_open_orders}
+        />
+        <main className="flex-1 overflow-y-auto bg-gray-50">
           <BranchProvider>
             <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto">
               <div className="mb-4">
@@ -90,8 +90,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               </SubscriptionGate>
             </div>
           </BranchProvider>
-        </BusinessProvider>
-      </main>
-    </div>
+        </main>
+      </div>
+    </BusinessProvider>
   )
 }
