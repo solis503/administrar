@@ -78,17 +78,34 @@ export default function POSPage() {
 
   const openShift = async () => {
     if (!business || !selectedBranchId) return
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    if (openingShift) return
     setOpeningShift(true)
-    const { data } = await supabase.from('cash_shifts').insert({
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setOpeningShift(false); return }
+    const { data, error } = await supabase.from('cash_shifts').insert({
       business_id: business.id,
       branch_id: selectedBranchId,
       opened_by: user.id,
       opening_amount: parseFloat(openingAmount) || 0,
       status: 'open',
     }).select().single()
-    setCurrentShift(data || null)
+
+    if (error) {
+      // Si ya había un turno abierto (por ejemplo, doble clic), simplemente lo traemos
+      // en vez de crear uno duplicado.
+      const { data: existing } = await supabase
+        .from('cash_shifts')
+        .select('*')
+        .eq('business_id', business.id)
+        .eq('branch_id', selectedBranchId)
+        .eq('status', 'open')
+        .order('opened_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      setCurrentShift(existing || null)
+    } else {
+      setCurrentShift(data || null)
+    }
     setOpeningAmount('')
     setOpeningShift(false)
   }
@@ -394,9 +411,9 @@ export default function POSPage() {
   return (
     <div className="flex flex-col lg:flex-row gap-4" style={{ minHeight: 'calc(100vh - 6rem)' }}>
       <div className="flex-1 flex flex-col">
-        <div className="flex items-center justify-between mb-4 gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
           <h1 className="text-2xl font-bold">🛒 Punto de Venta</h1>
-          <button onClick={openCloseShiftModal} className="text-xs font-semibold bg-gray-100 text-gray-700 px-3 py-2 rounded-xl border flex-shrink-0">
+          <button onClick={openCloseShiftModal} className="text-xs font-semibold bg-gray-100 text-gray-700 px-3 py-2 rounded-xl border self-start sm:self-auto">
             🧾 Turno: {curr}{Number(currentShift.opening_amount).toFixed(2)} · Cerrar
           </button>
         </div>
@@ -744,4 +761,4 @@ export default function POSPage() {
       )}
     </div>
   )
-                                                                                                                         }
+}
