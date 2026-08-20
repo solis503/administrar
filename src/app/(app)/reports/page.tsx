@@ -75,7 +75,7 @@ export default function ReportsPage() {
     if (saleIds.length > 0) {
       const { data: itemsData } = await supabase
         .from('sale_items')
-        .select('product_id, product_name, quantity, unit_price, subtotal, cost, returned_quantity')
+        .select('sale_id, product_id, product_name, quantity, unit_price, subtotal, cost, returned_quantity')
         .in('sale_id', saleIds)
       items = itemsData || []
     }
@@ -111,6 +111,23 @@ export default function ReportsPage() {
     .map(([name, qty]) => ({ name, qty, revenue: prodRevenue[name] || 0 }))
     .sort((a, b) => b.qty - a.qty)
 
+  // Mapa de venta -> fecha, para poder mostrar cuándo se registró cada línea vendida
+  const saleDateMap: Record<string, string> = {}
+  sales.forEach(s => { saleDateMap[s.id] = s.created_at })
+
+  // Detalle línea por línea: qué se vendió cada vez que se registró una venta, ordenado por fecha
+  const saleItemsDetail = saleItems
+    .map(it => ({
+      date: saleDateMap[it.sale_id],
+      saleId: it.sale_id,
+      name: it.product_name,
+      qty: Number(it.quantity) - Number(it.returned_quantity || 0),
+      unitPrice: Number(it.unit_price),
+      subtotal: (Number(it.quantity) - Number(it.returned_quantity || 0)) * Number(it.unit_price),
+    }))
+    .filter(it => it.qty > 0 && it.date)
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
   const getPeriodLabel = () => {
     if (period === 'today') return 'Hoy'
     if (period === 'week') return 'Última semana'
@@ -132,6 +149,18 @@ export default function ReportsPage() {
     const wsVentas = XLSX.utils.json_to_sheet(rows)
     XLSX.utils.book_append_sheet(wb, wsVentas, 'Ventas')
 
+    // Hoja nueva: el detalle de qué se vendió cada vez que se registró una venta (no agrupado)
+    const wsDetalle = XLSX.utils.json_to_sheet(
+      saleItemsDetail.map(it => ({
+        'Fecha y hora': new Date(it.date).toLocaleString('es'),
+        Producto: it.name,
+        Cantidad: it.qty,
+        'Precio Unitario': it.unitPrice,
+        Subtotal: it.subtotal,
+      }))
+    )
+    XLSX.utils.book_append_sheet(wb, wsDetalle, 'Detalle por Venta')
+
     const wsResumen = XLSX.utils.json_to_sheet([
       { Concepto: 'Período', Valor: getPeriodLabel() },
       { Concepto: 'Total Ventas', Valor: totalSales },
@@ -144,9 +173,9 @@ export default function ReportsPage() {
 
     if (allProdsSold.length > 0) {
       const wsProductos = XLSX.utils.json_to_sheet(
-        allProdsSold.map(p => ({ Producto: p.name, Cantidad: p.qty, Total: p.revenue }))
+        allProdsSold.map(p => ({ Producto: p.name, 'Cantidad Total': p.qty, 'Total Generado': p.revenue }))
       )
-      XLSX.utils.book_append_sheet(wb, wsProductos, 'Productos Vendidos')
+      XLSX.utils.book_append_sheet(wb, wsProductos, 'Cantidades Totales')
     }
 
     XLSX.writeFile(wb, `Reporte-${getPeriodLabel().replace(/\s+/g, '-')}.xlsx`)
@@ -166,17 +195,27 @@ export default function ReportsPage() {
       <td>${s.status === 'anulada' ? 'Anulada' : (Number(s.refunded_total) > 0 ? 'Con devolución' : 'OK')}</td>
     </tr>`).join('')
 
+    const detailRowsHtml = saleItemsDetail.map(it => `<tr>
+      <td>${new Date(it.date).toLocaleString('es')}</td>
+      <td>${it.name}</td>
+      <td style="text-align:right">${it.qty}</td>
+      <td style="text-align:right">${curr}${it.unitPrice.toFixed(2)}</td>
+      <td style="text-align:right">${curr}${it.subtotal.toFixed(2)}</td>
+    </tr>`).join('')
+
     win.document.write(`<html><head><title>Reporte - ${getPeriodLabel()}</title><style>
       body{font-family:Arial,sans-serif;padding:24px;color:#111}
       h1{font-size:20px;margin-bottom:2px}
+      h2{font-size:15px;margin-top:28px;margin-bottom:4px}
       p.sub{color:#666;margin-top:0}
-      table{width:100%;border-collapse:collapse;margin-top:16px}
+      table{width:100%;border-collapse:collapse;margin-top:12px}
       th,td{padding:8px;border-bottom:1px solid #eee;font-size:13px;text-align:left}
       th{background:#f5f5f5}
       .summary{display:flex;gap:12px;margin-top:16px;flex-wrap:wrap}
       .card{border:1px solid #eee;border-radius:8px;padding:10px 16px}
       .card p{margin:0;font-size:11px;color:#888}
       .card strong{font-size:16px;color:#111}
+      @media print { h2 { page-break-before: auto; } }
     </style></head><body>
       <h1>${business?.name || 'Reporte'}</h1>
       <p class="sub">Reporte de ventas · ${getPeriodLabel()}</p>
@@ -186,7 +225,12 @@ export default function ReportsPage() {
         <div class="card"><p>Gastos</p><strong>${curr}${totalExp.toFixed(2)}</strong></div>
         <div class="card"><p>Ganancia Bruta</p><strong>${curr}${gananciaBruta.toFixed(2)}</strong></div>
       </div>
+
+      <h2>🧾 Ventas registradas</h2>
       <table><thead><tr><th>Fecha</th><th>Total</th><th>Método</th><th>Estado</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+
+      <h2>📦 Detalle: qué se vendió en cada venta</h2>
+      <table><thead><tr><th>Fecha y hora</th><th>Producto</th><th>Cantidad</th><th>Precio Unitario</th><th>Subtotal</th></tr></thead><tbody>${detailRowsHtml}</tbody></table>
     </body></html>`)
     win.document.close()
     win.print()
