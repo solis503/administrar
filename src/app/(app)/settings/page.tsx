@@ -8,6 +8,7 @@ export default function SettingsPage() {
   const [currency, setCurrency] = useState('$')
   const [tax, setTax] = useState('13')
   const [loyaltyRate, setLoyaltyRate] = useState('10')
+  const [enableLoyalty, setEnableLoyalty] = useState(false)
   const [showRecipeAvailability, setShowRecipeAvailability] = useState(true)
   const [enableOpenOrders, setEnableOpenOrders] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -49,6 +50,7 @@ export default function SettingsPage() {
     setCurrency(business.currency_symbol)
     setTax(String(business.tax_percentage))
     setLoyaltyRate(String(business.loyalty_points_rate || 10))
+    setEnableLoyalty(!!business.enable_loyalty_program)
     setShowRecipeAvailability(business.show_recipe_availability !== false)
     setEnableOpenOrders(!!business.enable_open_orders)
 
@@ -115,6 +117,7 @@ export default function SettingsPage() {
       name, currency_symbol: currency,
       tax_percentage: parseFloat(tax) || 0,
       loyalty_points_rate: parseFloat(loyaltyRate) || 10,
+      enable_loyalty_program: enableLoyalty,
       show_recipe_availability: showRecipeAvailability,
       enable_open_orders: enableOpenOrders,
     }).eq('id', business.id)
@@ -169,7 +172,6 @@ export default function SettingsPage() {
 
     try {
       if (editingEmployee) {
-        // EDITAR EMPLEADO
         const { error } = await supabase
           .from('profiles')
           .update({
@@ -189,7 +191,6 @@ export default function SettingsPage() {
           setEditingEmployee(null)
         }
       } else if (manualUserId) {
-        // CREAR CON USER ID MANUAL
         const { error } = await supabase.from('profiles').insert({
           user_id: manualUserId,
           business_id: business.id,
@@ -209,7 +210,6 @@ export default function SettingsPage() {
           setShowEmployeeModal(false)
         }
       } else {
-        // CREAR AUTOMÁTICAMENTE
         if (!empForm.email || !empForm.password) {
           showMessage('❌ Email y contraseña son obligatorios', 'error')
           setSaving(false)
@@ -316,6 +316,8 @@ export default function SettingsPage() {
     return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
   }
 
+  const curr = currency
+
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">⚙️ Configuración</h1>
@@ -374,6 +376,36 @@ export default function SettingsPage() {
               <p className="text-xs text-gray-500">Para negocios de comida: anotá el pedido de un cliente sin cobrar todavía. El inventario se descuenta hasta que lo marqués como pagado/entregado. Agrega "Pedidos Pendientes" al menú.</p>
             </div>
           </label>
+
+          <div className="border rounded-xl p-4">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={enableLoyalty}
+                onChange={(e) => setEnableLoyalty(e.target.checked)}
+                className="w-5 h-5"
+              />
+              <div>
+                <p className="text-sm font-medium">⭐ Programa de lealtad</p>
+                <p className="text-xs text-gray-500">Si lo activás, vas a poder elegir un cliente al cobrar en el POS para que acumule puntos automáticamente</p>
+              </div>
+            </label>
+            {enableLoyalty && (
+              <div className="mt-4 pl-8">
+                <label className="text-sm font-medium block mb-2">Puntos por cada {curr}1 gastado</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={loyaltyRate}
+                  onChange={(e) => setLoyaltyRate(e.target.value)}
+                  className="w-32 px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Ej: si ponés 1, un cliente que gasta {curr}10 gana 10 puntos.</p>
+              </div>
+            )}
+          </div>
+
           <button onClick={handleSave} className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl">
             {saved ? '✓ Guardado' : '💾 Guardar'}
           </button>
@@ -383,9 +415,9 @@ export default function SettingsPage() {
       {tab === 'branches' && (
         <div>
           <div className="bg-white rounded-2xl shadow-sm border p-6 mb-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <h2 className="text-lg font-semibold">🏬 Sucursales</h2>
-              <button onClick={openAddBranch} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-semibold text-sm">+ Agregar Sucursal</button>
+              <button onClick={openAddBranch} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-semibold text-sm self-start sm:self-auto">+ Agregar Sucursal</button>
             </div>
           </div>
 
@@ -417,9 +449,9 @@ export default function SettingsPage() {
       {tab === 'employees' && (
         <div>
           <div className="bg-white rounded-2xl shadow-sm border p-6 mb-6">
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
               <h2 className="text-lg font-semibold">👥 Empleados</h2>
-              <button onClick={openAddEmployee} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-semibold text-sm">+ Agregar</button>
+              <button onClick={openAddEmployee} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-semibold text-sm self-start sm:self-auto">+ Agregar</button>
             </div>
           </div>
 
@@ -578,4 +610,4 @@ export default function SettingsPage() {
       )}
     </div>
   )
-}
+      }
