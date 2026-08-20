@@ -659,7 +659,8 @@ export default function InventoryPage() {
         <div className="mb-6">
           <h2 className="text-lg font-semibold mb-3">🍽️ Recetas <span className="text-xs font-normal text-gray-400">(disponibilidad calculada sola, no se ajusta a mano)</span></h2>
           <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-            <table className="w-full">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px]">
               <thead className="bg-gray-50 border-b">
                 <tr>
                   <th className="px-4 py-2 w-10"></th>
@@ -707,6 +708,7 @@ export default function InventoryPage() {
                 })}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       )}
@@ -714,7 +716,8 @@ export default function InventoryPage() {
       <div className="mb-6">
         <h2 className="text-lg font-semibold mb-3">📦 Productos Finales <span className="text-xs font-normal text-gray-400">(aparecen en el Punto de Venta)</span></h2>
         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-          <table className="w-full">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[600px]">
             <thead className="bg-gray-50 border-b">
               <tr>
                 <th className="px-4 py-2 w-10"></th>
@@ -773,6 +776,7 @@ export default function InventoryPage() {
               })}
             </tbody>
           </table>
+          </div>
           {finalProducts.length === 0 && <p className="text-center text-gray-400 py-6 text-sm">Sin productos finales todavía</p>}
         </div>
       </div>
@@ -780,7 +784,8 @@ export default function InventoryPage() {
       <div>
         <h2 className="text-lg font-semibold mb-3">🧪 Ingredientes <span className="text-xs font-normal text-gray-400">(solo para armar recetas, no aparecen en el Punto de Venta)</span></h2>
         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-          <table className="w-full">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[600px]">
             <thead className="bg-gray-50 border-b">
               <tr>
                 <th className="px-4 py-2 w-10"></th>
@@ -839,6 +844,7 @@ export default function InventoryPage() {
               })}
             </tbody>
           </table>
+          </div>
           {ingredientProducts.length === 0 && <p className="text-center text-gray-400 py-6 text-sm">Sin ingredientes todavía</p>}
         </div>
       </div>
@@ -1126,4 +1132,4 @@ export default function InventoryPage() {
       )}
     </div>
   )
-      }         
+          }
