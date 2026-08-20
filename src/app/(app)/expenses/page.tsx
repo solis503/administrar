@@ -2,39 +2,35 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import { useBranch } from '@/lib/branch-context'
+import { useBusiness } from '@/lib/business-context'
 
 export default function ExpensesPage() {
   const [expenses, setExpenses] = useState<any[]>([])
   const [sales, setSales] = useState<any[]>([])
-  const [business, setBusiness] = useState<any>(null)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ concept: '', amount: '', category: 'Otros', notes: '' })
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
+  const { business, loading: businessLoading } = useBusiness()
   const { selectedBranchId, branches } = useBranch()
 
-  useEffect(() => { loadData() }, [selectedBranchId])
+  useEffect(() => {
+    if (business) loadData()
+    else if (!businessLoading) setLoading(false)
+  }, [business, selectedBranchId])
 
   const loadData = async () => {
+    if (!business) return
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    let biz: any = null
-    const { data: ob } = await supabase.from('businesses').select('*').eq('owner_id', user.id).single()
-    if (ob) biz = ob
-    else { const { data: pr } = await supabase.from('profiles').select('*, businesses(*)').eq('user_id', user.id).single(); if (pr) biz = pr.businesses }
-    if (biz) {
-      setBusiness(biz)
-      let expQuery = supabase.from('expenses').select('*').eq('business_id', biz.id).order('created_at', { ascending: false })
-      let salQuery = supabase.from('sales').select('total').eq('business_id', biz.id)
-      if (selectedBranchId) {
-        expQuery = expQuery.eq('branch_id', selectedBranchId)
-        salQuery = salQuery.eq('branch_id', selectedBranchId)
-      }
-      const [exp, sal] = await Promise.all([expQuery, salQuery])
-      setExpenses(exp.data || [])
-      setSales(sal.data || [])
+    let expQuery = supabase.from('expenses').select('*').eq('business_id', business.id).order('created_at', { ascending: false })
+    let salQuery = supabase.from('sales').select('total').eq('business_id', business.id)
+    if (selectedBranchId) {
+      expQuery = expQuery.eq('branch_id', selectedBranchId)
+      salQuery = salQuery.eq('branch_id', selectedBranchId)
     }
+    const [exp, sal] = await Promise.all([expQuery, salQuery])
+    setExpenses(exp.data || [])
+    setSales(sal.data || [])
     setLoading(false)
   }
 
@@ -62,7 +58,7 @@ export default function ExpensesPage() {
   const profit = totalSales - totalExp
   const curr = business?.currency_symbol || '$'
 
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
+  if (businessLoading || loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
 
   return (
     <div>
@@ -74,9 +70,9 @@ export default function ExpensesPage() {
         <div className="bg-white rounded-2xl p-5 shadow-sm border"><p className="text-xs text-gray-500">Ganancia Neta</p><p className={`text-2xl font-bold ${profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{curr}{profit.toFixed(2)}</p></div>
       </div>
 
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
         <h2 className="font-semibold">Registro de Gastos</h2>
-        <button onClick={() => setShowForm(true)} className="bg-red-600 text-white px-4 py-2 rounded-xl font-semibold text-sm">+ Registrar Gasto</button>
+        <button onClick={() => setShowForm(true)} className="bg-red-600 text-white px-4 py-2 rounded-xl font-semibold text-sm self-start sm:self-auto">+ Registrar Gasto</button>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
