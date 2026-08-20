@@ -40,6 +40,8 @@ export default function POSPage() {
   const [pendingNotes, setPendingNotes] = useState('')
   const [savingPending, setSavingPending] = useState(false)
   const [pendingError, setPendingError] = useState('')
+  const [clients, setClients] = useState<any[]>([])
+  const [selectedClientId, setSelectedClientId] = useState('')
   const supabase = createClient()
   const { business, loading: businessLoading } = useBusiness()
   const { selectedBranchId, branches, canSwitchBranches } = useBranch()
@@ -69,6 +71,13 @@ export default function POSPage() {
         .limit(1)
         .maybeSingle()
       setCurrentShift(shift || null)
+
+      if (business.enable_loyalty_program) {
+        const { data: clientsData } = await supabase.from('clients').select('id, name').eq('business_id', business.id).eq('active', true).order('name')
+        setClients(clientsData || [])
+      } else {
+        setClients([])
+      }
     } else {
       setProducts([])
       setCurrentShift(null)
@@ -91,8 +100,6 @@ export default function POSPage() {
     }).select().single()
 
     if (error) {
-      // Si ya había un turno abierto (por ejemplo, doble clic), simplemente lo traemos
-      // en vez de crear uno duplicado.
       const { data: existing } = await supabase
         .from('cash_shifts')
         .select('*')
@@ -210,6 +217,7 @@ export default function POSPage() {
     setAmountPaid(total.toFixed(2))
     setIsMixedPayment(false)
     setMixedAmounts({ efectivo: '', tarjeta: '', transferencia: '' })
+    setSelectedClientId('')
     setShowPayment(true)
   }
 
@@ -247,6 +255,7 @@ export default function POSPage() {
         branch_id: selectedBranchId,
         shift_id: currentShift.id,
         user_id: user.id,
+        client_id: business.enable_loyalty_program ? (selectedClientId || null) : null,
         total: total,
         tax_amount: tax,
         payment_method: isMixedPayment ? 'mixto' : paymentMethod,
@@ -256,6 +265,21 @@ export default function POSPage() {
       }).select().single()
 
       if (saleErr || !sale) throw new Error(saleErr?.message || 'No se pudo registrar la venta')
+
+      // Si el programa de lealtad está activado y la venta tiene cliente, le sumamos los puntos
+      if (business.enable_loyalty_program && selectedClientId) {
+        const rate = Number(business.loyalty_points_rate ?? 10)
+        if (rate > 0) {
+          const { data: client } = await supabase.from('clients').select('loyalty_points, total_spent').eq('id', selectedClientId).single()
+          if (client) {
+            const earnedPoints = Math.round(total * rate)
+            await supabase.from('clients').update({
+              loyalty_points: Number(client.loyalty_points || 0) + earnedPoints,
+              total_spent: Number(client.total_spent || 0) + total,
+            }).eq('id', selectedClientId)
+          }
+        }
+      }
 
       // Mandamos los pagos y las líneas del carrito en paralelo (en vez de uno por uno) para que sea más rápido
       const paymentInserts = payments.map(p =>
@@ -663,6 +687,18 @@ export default function POSPage() {
               </button>
             </div>
 
+            {business?.enable_loyalty_program && clients.length > 0 && (
+              <div className="mb-4">
+                <label className="text-sm font-medium block mb-1">👤 Cliente <span className="text-gray-400 font-normal">(opcional, para acumular puntos)</span></label>
+                <select value={selectedClientId} onChange={e => setSelectedClientId(e.target.value)} className="w-full px-4 py-3 rounded-xl border outline-none">
+                  <option value="">Sin cliente</option>
+                  {clients.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {!isMixedPayment ? (
               <>
                 <div className="grid grid-cols-3 gap-2 mb-4">
@@ -761,4 +797,4 @@ export default function POSPage() {
       )}
     </div>
   )
-}
+            }
