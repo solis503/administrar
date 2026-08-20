@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-client'
+import * as XLSX from 'xlsx'
 import { useBranch } from '@/lib/branch-context'
 import { useBusiness } from '@/lib/business-context'
 import { getProductCostMap, calculateCOGS } from '@/lib/cogs'
@@ -40,7 +41,6 @@ export default function ReportsPage() {
     } else if (period === 'month') {
       since = new Date(now.getFullYear(), now.getMonth(), 1)
     } else {
-      // Personalizado: si no se eligió nada todavía, usamos hoy como default
       since = customFrom ? new Date(customFrom + 'T00:00:00') : new Date(now.getFullYear(), now.getMonth(), now.getDate())
       until = customTo ? new Date(customTo + 'T23:59:59.999') : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
     }
@@ -69,7 +69,6 @@ export default function ReportsPage() {
     setSales(salesData)
     setExpenses(expensesRes.data || [])
 
-    // Solo contamos ventas completadas (no anuladas) para las métricas
     const activeSales = salesData.filter((s: any) => s.status !== 'anulada')
     const saleIds = activeSales.map((s: any) => s.id)
     let items: any[] = []
@@ -82,7 +81,6 @@ export default function ReportsPage() {
     }
     setSaleItems(items)
 
-    // Costo real de lo vendido (incluye recetas: suma costo de cada ingrediente), descontando lo devuelto
     const costMap = await getProductCostMap(supabase, business.id)
     const itemsForCogs = items.map((it: any) => ({ ...it, quantity: Number(it.quantity) - Number(it.returned_quantity || 0) }))
     setCogs(calculateCOGS(itemsForCogs, costMap))
@@ -113,6 +111,87 @@ export default function ReportsPage() {
     .map(([name, qty]) => ({ name, qty, revenue: prodRevenue[name] || 0 }))
     .sort((a, b) => b.qty - a.qty)
 
+  const getPeriodLabel = () => {
+    if (period === 'today') return 'Hoy'
+    if (period === 'week') return 'Última semana'
+    if (period === 'month') return 'Este mes'
+    return `${customFrom || 'inicio'} al ${customTo || 'hoy'}`
+  }
+
+  // ---------- Exportar a Excel (archivo .xlsx real, se descarga directo) ----------
+  const exportExcel = () => {
+    const rows = sales.map(s => ({
+      Fecha: new Date(s.created_at).toLocaleString('es'),
+      Total: Number(s.total),
+      Método: s.payment_method,
+      Estado: s.status === 'anulada' ? 'Anulada' : (Number(s.refunded_total) > 0 ? 'Con devolución' : 'OK'),
+      Devuelto: Number(s.refunded_total || 0),
+    }))
+
+    const wb = XLSX.utils.book_new()
+    const wsVentas = XLSX.utils.json_to_sheet(rows)
+    XLSX.utils.book_append_sheet(wb, wsVentas, 'Ventas')
+
+    const wsResumen = XLSX.utils.json_to_sheet([
+      { Concepto: 'Período', Valor: getPeriodLabel() },
+      { Concepto: 'Total Ventas', Valor: totalSales },
+      { Concepto: 'Costo de Productos', Valor: cogs },
+      { Concepto: 'Gastos', Valor: totalExp },
+      { Concepto: 'Ganancia Bruta', Valor: gananciaBruta },
+      { Concepto: 'Transacciones', Valor: activeSales.length },
+    ])
+    XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen')
+
+    if (allProdsSold.length > 0) {
+      const wsProductos = XLSX.utils.json_to_sheet(
+        allProdsSold.map(p => ({ Producto: p.name, Cantidad: p.qty, Total: p.revenue }))
+      )
+      XLSX.utils.book_append_sheet(wb, wsProductos, 'Productos Vendidos')
+    }
+
+    XLSX.writeFile(wb, `Reporte-${getPeriodLabel().replace(/\s+/g, '-')}.xlsx`)
+  }
+
+  // ---------- Exportar a PDF (abre una ventana lista para "Guardar como PDF") ----------
+  const exportPDF = () => {
+    const win = window.open('', '_blank', 'width=800,height=900')
+    if (!win) {
+      alert('Tu navegador bloqueó la ventana. Permití las ventanas emergentes para poder exportar a PDF.')
+      return
+    }
+    const rowsHtml = sales.map(s => `<tr>
+      <td>${new Date(s.created_at).toLocaleString('es')}</td>
+      <td style="text-align:right">${curr}${Number(s.total).toFixed(2)}</td>
+      <td>${s.payment_method}</td>
+      <td>${s.status === 'anulada' ? 'Anulada' : (Number(s.refunded_total) > 0 ? 'Con devolución' : 'OK')}</td>
+    </tr>`).join('')
+
+    win.document.write(`<html><head><title>Reporte - ${getPeriodLabel()}</title><style>
+      body{font-family:Arial,sans-serif;padding:24px;color:#111}
+      h1{font-size:20px;margin-bottom:2px}
+      p.sub{color:#666;margin-top:0}
+      table{width:100%;border-collapse:collapse;margin-top:16px}
+      th,td{padding:8px;border-bottom:1px solid #eee;font-size:13px;text-align:left}
+      th{background:#f5f5f5}
+      .summary{display:flex;gap:12px;margin-top:16px;flex-wrap:wrap}
+      .card{border:1px solid #eee;border-radius:8px;padding:10px 16px}
+      .card p{margin:0;font-size:11px;color:#888}
+      .card strong{font-size:16px;color:#111}
+    </style></head><body>
+      <h1>${business?.name || 'Reporte'}</h1>
+      <p class="sub">Reporte de ventas · ${getPeriodLabel()}</p>
+      <div class="summary">
+        <div class="card"><p>Total Ventas</p><strong>${curr}${totalSales.toFixed(2)}</strong></div>
+        <div class="card"><p>Costo de Productos</p><strong>${curr}${cogs.toFixed(2)}</strong></div>
+        <div class="card"><p>Gastos</p><strong>${curr}${totalExp.toFixed(2)}</strong></div>
+        <div class="card"><p>Ganancia Bruta</p><strong>${curr}${gananciaBruta.toFixed(2)}</strong></div>
+      </div>
+      <table><thead><tr><th>Fecha</th><th>Total</th><th>Método</th><th>Estado</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+    </body></html>`)
+    win.document.close()
+    win.print()
+  }
+
   if (businessLoading || loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin text-4xl">⏳</div></div>
 
   return (
@@ -138,9 +217,15 @@ export default function ReportsPage() {
         </div>
       )}
 
-      <div className="flex gap-2 mb-6">
-        <button onClick={() => setTab('resumen')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'resumen' ? 'bg-gray-900 text-white' : 'bg-white border hover:bg-gray-50'}`}>📊 Resumen</button>
-        <button onClick={() => setTab('cantidades')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'cantidades' ? 'bg-gray-900 text-white' : 'bg-white border hover:bg-gray-50'}`}>📦 Cantidades Vendidas</button>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-6">
+        <div className="flex gap-2">
+          <button onClick={() => setTab('resumen')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'resumen' ? 'bg-gray-900 text-white' : 'bg-white border hover:bg-gray-50'}`}>📊 Resumen</button>
+          <button onClick={() => setTab('cantidades')} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === 'cantidades' ? 'bg-gray-900 text-white' : 'bg-white border hover:bg-gray-50'}`}>📦 Cantidades Vendidas</button>
+        </div>
+        <div className="flex gap-2 self-start sm:self-auto">
+          <button onClick={exportExcel} disabled={sales.length === 0} className="px-3 py-2 bg-green-600 text-white rounded-xl text-sm font-semibold disabled:opacity-50">📊 Excel</button>
+          <button onClick={exportPDF} disabled={sales.length === 0} className="px-3 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold disabled:opacity-50">📄 PDF</button>
+        </div>
       </div>
 
       {tab === 'cantidades' ? (
@@ -224,10 +309,7 @@ export default function ReportsPage() {
       </div>
 
       <div className="mt-6 bg-white rounded-2xl shadow-sm border p-6">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="font-semibold">🧾 Detalle de Ventas</h2>
-          <button onClick={() => alert('📄 Exportando a Excel...')} className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-semibold">📥 Exportar</button>
-        </div>
+        <h2 className="font-semibold mb-4">🧾 Detalle de Ventas</h2>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b"><tr>
