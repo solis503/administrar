@@ -2,62 +2,41 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request: { headers: request.headers } })
+  let response = NextResponse.next({
+    request: { headers: request.headers },
+  })
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return request.cookies.get(name)?.value
+        getAll() {
+          return request.cookies.getAll()
         },
-        set(name: string, value: string, options: any) {
-          request.cookies.set({ name, value, ...options })
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
           response = NextResponse.next({ request: { headers: request.headers } })
-          response.cookies.set({ name, value, ...options })
-        },
-        remove(name: string, options: any) {
-          request.cookies.set({ name, value: '', ...options })
-          response = NextResponse.next({ request: { headers: request.headers } })
-          response.cookies.set({ name, value: '', ...options })
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options)
+          )
         },
       },
     }
   )
 
-  let user = null
-  try {
-    const { data } = await supabase.auth.getUser()
-    user = data.user
-  } catch (err) {
-    // Token de sesión inválido/corrupto (ej. cookie vieja): tratamos como no logueado
-    // en vez de dejar que esto tumbe la página entera para el usuario, y limpiamos
-    // las cookies de sesión rotas para que no se repita en cada visita.
-    user = null
-    request.cookies.getAll().forEach((cookie) => {
-      if (cookie.name.startsWith('sb-')) {
-        response.cookies.set({ name: cookie.name, value: '', maxAge: 0 })
-      }
-    })
-  }
-
-  const protectedPaths = ['/dashboard', '/products', '/pos', '/inventory', '/settings', '/subscription', '/admin']
-  const isProtected = protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))
-  const authPaths = ['/login', '/register']
-  const isAuthPage = authPaths.some(path => request.nextUrl.pathname.startsWith(path))
-
-  if (isProtected && !user) return NextResponse.redirect(new URL('/login', request.url))
-  if (isAuthPage && user) return NextResponse.redirect(new URL('/dashboard', request.url))
-
-  if (request.nextUrl.pathname === '/') {
-    if (user) return NextResponse.redirect(new URL('/dashboard', request.url))
-    return NextResponse.redirect(new URL('/login', request.url))
-  }
+  // Si Supabase se está "despertando" y tarda mucho, no dejamos que Vercel mate
+  // la petición entera a los 25s con una pantalla de error fea. Le damos 8 segundos
+  // nada más, y si no contesta a tiempo, dejamos pasar de todos modos: la pantalla
+  // que sigue (el layout de la app) ya se encarga de mandar a /login si hace falta.
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 8000))
+  await Promise.race([supabase.auth.getUser(), timeout])
 
   return response
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$))'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+  ],
 }
