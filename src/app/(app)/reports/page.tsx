@@ -10,6 +10,15 @@ import SaleDetailModal from '@/components/SaleDetailModal'
 type Period = 'today' | 'week' | 'month' | 'custom'
 const STREAK_THRESHOLD = 4 // días con ventas que hay que registrar en la semana para mantener la racha
 
+// Clave de fecha en HORA LOCAL del dispositivo (no UTC), para que una venta de la
+// noche no se cuente como si fuera del día siguiente.
+const dateKey = (d: Date) => {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 export default function ReportsPage() {
   const [period, setPeriod] = useState<Period>('week')
   const [customFrom, setCustomFrom] = useState('')
@@ -118,7 +127,6 @@ export default function ReportsPage() {
     x.setHours(0, 0, 0, 0)
     return x
   }
-  const dateKey = (d: Date) => d.toISOString().split('T')[0]
 
   const loadStreak = async () => {
     if (!business) return
@@ -171,6 +179,32 @@ export default function ReportsPage() {
   const egresos = totalExp + cogs
   const curr = business?.currency_symbol || '$'
   const branchNameMap: Record<string, string> = Object.fromEntries(branches.map((b: any) => [b.id, b.name]))
+
+  // ---------- Desglose de ventas por día (para Semana / Mes / rango personalizado) ----------
+  const { since: rangeSince, until: rangeUntil } = getDateRange()
+  const dailyBreakdown = (() => {
+    const map: Record<string, number> = {}
+    activeSales.forEach(s => {
+      const key = dateKey(new Date(s.created_at))
+      map[key] = (map[key] || 0) + Number(s.total) - Number(s.refunded_total || 0)
+    })
+    const days: { key: string; label: string; total: number }[] = []
+    const cursor = new Date(rangeSince)
+    cursor.setHours(0, 0, 0, 0)
+    const end = new Date(rangeUntil)
+    while (cursor <= end) {
+      const key = dateKey(cursor)
+      days.push({
+        key,
+        label: cursor.toLocaleDateString('es', { weekday: 'short', day: '2-digit', month: 'short' }),
+        total: map[key] || 0,
+      })
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    return days
+  })()
+  const showDailyBreakdown = period !== 'today' && dailyBreakdown.length > 1
+  const maxDaily = Math.max(1, ...dailyBreakdown.map(d => d.total))
 
   const byMethod: Record<string, number> = { efectivo: 0, tarjeta: 0, transferencia: 0, mixto: 0 }
   activeSales.forEach(s => { byMethod[s.payment_method] = (byMethod[s.payment_method] || 0) + Number(s.total) })
@@ -240,6 +274,13 @@ export default function ReportsPage() {
     const wsVentas = XLSX.utils.json_to_sheet(rows)
     XLSX.utils.book_append_sheet(wb, wsVentas, 'Ventas')
 
+    if (showDailyBreakdown) {
+      const wsDiario = XLSX.utils.json_to_sheet(
+        dailyBreakdown.map(d => ({ Día: d.label, 'Total Vendido': d.total }))
+      )
+      XLSX.utils.book_append_sheet(wb, wsDiario, 'Ventas por Día')
+    }
+
     const wsDetalle = XLSX.utils.json_to_sheet(
       saleItemsDetail.map(it => ({
         'Fecha y hora': new Date(it.date).toLocaleString('es'),
@@ -301,6 +342,11 @@ export default function ReportsPage() {
       <td>${s.status === 'anulada' ? 'Anulada' : (Number(s.refunded_total) > 0 ? 'Con devolución' : 'OK')}</td>
     </tr>`).join('')
 
+    const dailyRowsHtml = dailyBreakdown.map(d => `<tr>
+      <td>${d.label}</td>
+      <td style="text-align:right">${curr}${d.total.toFixed(2)}</td>
+    </tr>`).join('')
+
     const detailRowsHtml = saleItemsDetail.map(it => `<tr>
       <td>${new Date(it.date).toLocaleString('es')}</td>
       <td>${it.name}</td>
@@ -341,6 +387,9 @@ export default function ReportsPage() {
         <div class="card"><p>Egresos</p><strong>${curr}${egresos.toFixed(2)}</strong></div>
         <div class="card"><p>Balance</p><strong>${curr}${balance.toFixed(2)}</strong></div>
       </div>
+
+      ${showDailyBreakdown ? `<h2>📅 Ventas por Día</h2>
+      <table><thead><tr><th>Día</th><th>Total Vendido</th></tr></thead><tbody>${dailyRowsHtml}</tbody></table>` : ''}
 
       <h2>🧾 Ventas registradas</h2>
       <table><thead><tr><th>Fecha</th><th>Total</th><th>Método</th><th>Estado</th></tr></thead><tbody>${rowsHtml}</tbody></table>
@@ -386,7 +435,7 @@ export default function ReportsPage() {
           )
         })}
         <div className="w-px h-6 bg-white/30 flex-shrink-0" />
-        <button onClick={() => { setPeriod('custom'); setShowDatePicker(!showDatePicker) }} className="flex-shrink-0 text-white text-lg px-2">📅</button>
+        <button onClick={() => { setPeriod('custom'); setShowDatePicker(!showDatePicker) }} title="Ver una fecha personalizada" className="flex-shrink-0 text-white text-lg px-2">📅</button>
       </div>
 
       {period === 'custom' && showDatePicker && (
@@ -419,14 +468,31 @@ export default function ReportsPage() {
             <p className="text-xl font-bold text-red-500">{curr}{egresos.toFixed(2)}</p>
           </div>
         </div>
-        <div className="flex justify-between items-center border-t pt-4 text-sm">
-          <div className="flex gap-3">
-            <button onClick={exportExcel} disabled={sales.length === 0} className="font-semibold text-primary-700 disabled:opacity-40 disabled:cursor-not-allowed">📊 Excel</button>
-            <button onClick={exportPDF} disabled={sales.length === 0} className="font-semibold text-primary-700 disabled:opacity-40 disabled:cursor-not-allowed">📄 PDF</button>
-          </div>
-          <button onClick={() => setTab('turnos')} className="font-semibold text-primary-700">🧮 Turnos de Caja ›</button>
+        <div className="flex gap-4 border-t pt-4 text-sm">
+          <button onClick={exportExcel} disabled={sales.length === 0} className="font-semibold text-primary-700 disabled:opacity-40 disabled:cursor-not-allowed">📊 Excel</button>
+          <button onClick={exportPDF} disabled={sales.length === 0} className="font-semibold text-primary-700 disabled:opacity-40 disabled:cursor-not-allowed">📄 PDF</button>
         </div>
       </div>
+
+      {/* Desglose por día — solo cuando el período abarca más de un día */}
+      {showDailyBreakdown && (
+        <div className="bg-white rounded-2xl shadow-sm border p-6 mb-4">
+          <h2 className="font-semibold mb-4">📅 Ventas por Día</h2>
+          <div className="space-y-2">
+            {dailyBreakdown.map(d => (
+              <div key={d.key}>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="capitalize text-gray-600">{d.label}</span>
+                  <span className="font-semibold">{curr}{d.total.toFixed(2)}</span>
+                </div>
+                <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-primary-500 rounded-full" style={{ width: `${(d.total / maxDaily) * 100}%` }}></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Racha semanal */}
       <div className="bg-white border-2 border-primary-200 rounded-2xl p-4 mb-6 flex items-center gap-4 flex-wrap">
@@ -631,4 +697,4 @@ export default function ReportsPage() {
       )}
     </div>
   )
-                }
+}
