@@ -176,7 +176,7 @@ export default function ReportsPage() {
   const totalExp = expenses.reduce((s, v) => s + Number(v.amount), 0)
   const gananciaBruta = totalSales - cogs
   const balance = gananciaBruta - totalExp
-  const egresos = totalExp + cogs
+  const egresos = totalExp // Egresos = solo lo que se gastó de verdad (gastos operativos), NO el costo de los productos vendidos
   const curr = business?.currency_symbol || '$'
   const branchNameMap: Record<string, string> = Object.fromEntries(branches.map((b: any) => [b.id, b.name]))
 
@@ -237,6 +237,15 @@ export default function ReportsPage() {
     .filter(it => it.qty > 0 && it.date)
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
 
+  // Resumen de "qué se vendió" por cada venta, para la lista tipo "1 Naranja con piña, 1 Licuado..."
+  const saleSummaryMap: Record<string, string> = {}
+  sales.forEach(s => {
+    const itemsForSale = saleItems.filter(it => it.sale_id === s.id && (Number(it.quantity) - Number(it.returned_quantity || 0)) > 0)
+    saleSummaryMap[s.id] = itemsForSale.length > 0
+      ? itemsForSale.map(it => `${Number(it.quantity) - Number(it.returned_quantity || 0)} ${it.product_name}`).join(', ')
+      : 'Venta libre'
+  })
+
   const totalDiferencias = shifts.reduce((s, sh) => s + Number(sh.difference || 0), 0)
 
   const getPeriodLabel = () => {
@@ -260,10 +269,14 @@ export default function ReportsPage() {
     setShowDatePicker(false)
   }
 
+  const paymentIcon: Record<string, string> = { efectivo: '💵', tarjeta: '💳', transferencia: '🏦', mixto: '🔀' }
+  const paymentLabel: Record<string, string> = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', mixto: 'Mixto' }
+
   // ---------- Exportar a Excel (archivo .xlsx real, se descarga directo) ----------
   const exportExcel = () => {
     const rows = sales.map(s => ({
       Fecha: new Date(s.created_at).toLocaleString('es'),
+      'Qué se vendió': saleSummaryMap[s.id] || '',
       Total: Number(s.total),
       Método: s.payment_method,
       Estado: s.status === 'anulada' ? 'Anulada' : (Number(s.refunded_total) > 0 ? 'Con devolución' : 'OK'),
@@ -309,10 +322,9 @@ export default function ReportsPage() {
     const wsResumen = XLSX.utils.json_to_sheet([
       { Concepto: 'Período', Valor: getPeriodLabel() },
       { Concepto: 'Ingresos', Valor: totalSales },
-      { Concepto: 'Egresos (costo + gastos)', Valor: egresos },
+      { Concepto: 'Egresos (gastos operativos)', Valor: egresos },
+      { Concepto: 'Costo de Productos Vendidos', Valor: cogs },
       { Concepto: 'Balance', Valor: balance },
-      { Concepto: 'Costo de Productos', Valor: cogs },
-      { Concepto: 'Gastos', Valor: totalExp },
       { Concepto: 'Transacciones', Valor: activeSales.length },
       { Concepto: 'Diferencia total en turnos de caja', Valor: totalDiferencias },
     ])
@@ -337,6 +349,7 @@ export default function ReportsPage() {
     }
     const rowsHtml = sales.map(s => `<tr>
       <td>${new Date(s.created_at).toLocaleString('es')}</td>
+      <td>${saleSummaryMap[s.id] || ''}</td>
       <td style="text-align:right">${curr}${Number(s.total).toFixed(2)}</td>
       <td>${s.payment_method}</td>
       <td>${s.status === 'anulada' ? 'Anulada' : (Number(s.refunded_total) > 0 ? 'Con devolución' : 'OK')}</td>
@@ -384,7 +397,8 @@ export default function ReportsPage() {
       <p class="sub">Reporte de ventas · ${getPeriodLabel()}</p>
       <div class="summary">
         <div class="card"><p>Ingresos</p><strong>${curr}${totalSales.toFixed(2)}</strong></div>
-        <div class="card"><p>Egresos</p><strong>${curr}${egresos.toFixed(2)}</strong></div>
+        <div class="card"><p>Egresos (gastos)</p><strong>${curr}${egresos.toFixed(2)}</strong></div>
+        <div class="card"><p>Costo de Productos</p><strong>${curr}${cogs.toFixed(2)}</strong></div>
         <div class="card"><p>Balance</p><strong>${curr}${balance.toFixed(2)}</strong></div>
       </div>
 
@@ -392,7 +406,7 @@ export default function ReportsPage() {
       <table><thead><tr><th>Día</th><th>Total Vendido</th></tr></thead><tbody>${dailyRowsHtml}</tbody></table>` : ''}
 
       <h2>🧾 Ventas registradas</h2>
-      <table><thead><tr><th>Fecha</th><th>Total</th><th>Método</th><th>Estado</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+      <table><thead><tr><th>Fecha</th><th>Qué se vendió</th><th>Total</th><th>Método</th><th>Estado</th></tr></thead><tbody>${rowsHtml}</tbody></table>
 
       <h2>📦 Detalle: qué se vendió en cada venta</h2>
       <table><thead><tr><th>Fecha y hora</th><th>Producto</th><th>Cantidad</th><th>Precio Unitario</th><th>Subtotal</th></tr></thead><tbody>${detailRowsHtml}</tbody></table>
@@ -647,41 +661,42 @@ export default function ReportsPage() {
         </div>
       </div>
 
+      {/* Detalle de Ventas — lista estilo tarjetas, con qué se vendió en cada una */}
       <div className="mt-6 bg-white rounded-2xl shadow-sm border p-6">
         <h2 className="font-semibold mb-4">🧾 Detalle de Ventas</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b"><tr>
-              <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">Fecha</th>
-              <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">Total</th>
-              <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">Método</th>
-              <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">Estado</th>
-              <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500"></th>
-            </tr></thead>
-            <tbody className="divide-y">
-              {sales.map(s => (
-                <tr key={s.id} className="hover:bg-gray-50">
-                  <td className="px-3 py-2">{new Date(s.created_at).toLocaleDateString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
-                  <td className="px-3 py-2 font-semibold">{curr}{Number(s.total).toFixed(2)}</td>
-                  <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${s.payment_method === 'efectivo' ? 'bg-green-100 text-green-700' : s.payment_method === 'tarjeta' ? 'bg-blue-100 text-blue-700' : s.payment_method === 'mixto' ? 'bg-gray-200 text-gray-700' : 'bg-purple-100 text-purple-700'}`}>{s.payment_method}</span></td>
-                  <td className="px-3 py-2">
-                    {s.status === 'anulada' ? (
-                      <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">Anulada</span>
-                    ) : Number(s.refunded_total) > 0 ? (
-                      <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-700">Con devolución</span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">OK</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <button onClick={() => setSelectedSale(s)} className="text-primary-600 text-xs font-semibold">Ver</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {sales.length === 0 && <p className="text-center text-gray-400 py-8">No hay ventas en este rango de fechas</p>}
+        {sales.length === 0 ? (
+          <p className="text-center text-gray-400 py-8">No hay ventas en este rango de fechas</p>
+        ) : (
+          <div className="divide-y">
+            {sales.map(s => {
+              const isVoided = s.status === 'anulada'
+              const hasRefund = Number(s.refunded_total) > 0
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => setSelectedSale(s)}
+                  className="w-full flex items-center gap-3 py-4 text-left hover:bg-gray-50 -mx-2 px-2 rounded-xl"
+                >
+                  <div className="w-11 h-11 rounded-full bg-green-50 flex items-center justify-center text-xl flex-shrink-0">
+                    {paymentIcon[s.payment_method] || '💰'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm truncate">{saleSummaryMap[s.id]}</p>
+                    <p className="text-xs text-gray-500">
+                      {paymentLabel[s.payment_method] || s.payment_method} · {new Date(s.created_at).toLocaleString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="font-bold">{curr}{Number(s.total).toFixed(2)}</p>
+                    <p className={`text-xs font-semibold ${isVoided ? 'text-red-600' : hasRefund ? 'text-orange-600' : 'text-green-600'}`}>
+                      {isVoided ? 'Anulada' : hasRefund ? 'Con devolución' : 'Pagado'}
+                    </p>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
       </>
       )}
