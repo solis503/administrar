@@ -25,11 +25,11 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // Si Supabase se está "despertando" y tarda mucho, no dejamos que Vercel mate
-  // la petición entera a los 25s con una pantalla de error fea. Le damos 8 segundos
-  // nada más, y si no contesta a tiempo, dejamos pasar de todos modos: la pantalla
-  // que sigue (el layout de la app) ya se encarga de mandar a /login si hace falta.
-  const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 8000))
+  // Le damos a Supabase 20 segundos (Vercel mata la petición a los 25s) para que
+  // le alcance el tiempo de renovar tu sesión, aunque esté "despertando" de un
+  // rato sin uso. Solo si de plano no contesta en ese margen, dejamos pasar
+  // igual para no trabar la app por completo.
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 20000))
   await Promise.race([supabase.auth.getUser(), timeout])
 
   return response
@@ -40,3 +40,4 @@ export const config = {
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
+  
