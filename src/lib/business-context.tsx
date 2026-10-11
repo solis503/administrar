@@ -20,6 +20,13 @@ const BusinessContext = createContext<BusinessContextType | null>(null)
  * y lo comparte con todas las pantallas. Antes, cada módulo (Dashboard, POS, Productos,
  * Inventario, Reportes) volvía a preguntarle esto mismo a Supabase cada vez que se
  * navegaba a él, lo que hacía sentir la app lenta al cambiar de sección.
+ *
+ * IMPORTANTE: usamos getSession() en vez de getUser() a propósito. getUser() le pide
+ * a Supabase que vuelva a validar/renovar la sesión por la red — si eso pasa al mismo
+ * tiempo que el middleware también la está renovando, Supabase puede pensar que es un
+ * robo de sesión y cerrarla por completo (eso era lo que te estaba sacando de la app
+ * varias veces al día). getSession() simplemente LEE la sesión que el middleware ya
+ * dejó renovada, sin pedir una renovación nueva por su cuenta.
  */
 export function BusinessProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState<string | null>(null)
@@ -33,7 +40,8 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user ?? null
     if (!user) {
       setUserId(null)
       setBusiness(null)
