@@ -24,7 +24,11 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
 
   const load = async () => {
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
+    // getSession() solo LEE la sesión que el middleware ya renovó. getUser() pedía una
+    // validación nueva por la red al mismo tiempo que el middleware, y esa doble
+    // renovación hacía que Supabase cerrara la sesión por seguridad.
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user ?? null
     if (!user) { setLoading(false); return }
 
     const { data: profile } = await supabase
