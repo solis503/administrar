@@ -1,5 +1,5 @@
 'use client'
-import { useState, Suspense } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
@@ -27,6 +27,24 @@ function LoginForm() {
   const searchParams = useSearchParams()
   const supabase = createClient()
   const t = translations[lang]
+
+  // Si ya hay sesión válida, no pedir credenciales otra vez.
+  // El freno de 15 s evita un ciclo login <-> dashboard.
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const last = Number(sessionStorage.getItem('fs_autologin') || 0)
+        if (Date.now() - last < 15000) return
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session) {
+          sessionStorage.setItem('fs_autologin', String(Date.now()))
+          router.replace('/dashboard')
+        }
+      } catch {}
+    }
+    check()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
