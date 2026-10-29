@@ -10,20 +10,66 @@ import { BusinessProvider } from '@/lib/business-context'
 
 export const dynamic = 'force-dynamic'
 
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// Un error de red / Supabase "despertando" NO significa que la sesión se perdió.
+function isTransient(error: any) {
+  if (!error) return false
+  if (error.code === 'PGRST116') return false
+  const status = error.status
+  if (error.name === 'AuthRetryableFetchError') return true
+  if (status === undefined || status === 0 || status >= 500) return true
+  return typeof error.code !== 'string' || error.code.length === 0 || /^(5|08|57|53)/.test(error.code)
+}
+
+async function retry<R extends { error: any }>(fn: () => PromiseLike<R>, tries = 3): Promise<R> {
+  let res = await fn()
+  for (let i = 1; i < tries && res.error && isTransient(res.error); i++) {
+    await wait(700 * i)
+    res = await fn()
+  }
+  return res
+}
+
+function Reconnecting() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+      <div className="bg-white rounded-2xl shadow-lg p-8 max-w-sm w-full text-center">
+        <div className="text-4xl mb-3">📡</div>
+        <h1 className="text-lg font-bold text-gray-900 mb-2">Reconectando...</h1>
+        <p className="text-sm text-gray-500 mb-5">
+          La conexión con el servidor tardó más de lo normal. Tu sesión sigue activa.
+        </p>
+        <a href="/dashboard" className="inline-block px-5 py-3 bg-blue-600 text-white font-semibold rounded-xl">
+          Reintentar
+        </a>
+      </div>
+    </div>
+  )
+}
+
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = createServerSupabase()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  const userRes = await retry(() => supabase.auth.getUser())
+  const user = userRes.data?.user
+  if (!user) {
+    // Solo mandamos al login si de verdad no hay sesión; un fallo de red no cierra la sesión.
+    if (userRes.error && isTransient(userRes.error)) return <Reconnecting />
+    redirect('/login')
+  }
 
   // Buscar el perfil del usuario (NO asumir que es owner)
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*, businesses(*)')
-    .eq('user_id', user.id)
-    .eq('active', true)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .single()
+  const { data: profile, error: profileError } = await retry(() =>
+    supabase
+      .from('profiles')
+      .select('*, businesses(*)')
+      .eq('user_id', user.id)
+      .eq('active', true)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+  )
+  if (profileError) return <Reconnecting />
 
   let userRole = 'seller'
   let businessData: any = null
@@ -33,12 +79,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     businessData = profile.businesses
   } else {
     // Si no tiene perfil, buscar si es owner directo
-    const { data: ownerBiz } = await supabase
-      .from('businesses')
-      .select('*')
-      .eq('owner_id', user.id)
-      .single()
-    
+    const { data: ownerBiz, error: ownerError } = await retry(() =>
+      supabase
+        .from('businesses')
+        .select('*')
+        .eq('owner_id', user.id)
+        .limit(1)
+        .maybeSingle()
+    )
+    if (ownerError) return <Reconnecting />
+
     if (ownerBiz) {
       userRole = 'owner'
       businessData = ownerBiz
@@ -51,7 +101,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .from('subscriptions')
     .select('plan, trial_ends_at, current_period_end')
     .eq('business_id', businessData.id)
-    .single()
+    .maybeSingle()
 
   const { count: pendingCount } = await supabase
     .from('payment_submissions')
