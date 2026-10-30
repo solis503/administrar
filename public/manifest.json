@@ -2,7 +2,7 @@
   "name": "FlowStock - Administra. Controla. Haz crecer tu negocio.",
   "short_name": "FlowStock",
   "description": "Gestión de inventario, productos, empleados y punto de venta",
-  "start_url": "/",
+  "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
   "background_color": "#ffffff",
