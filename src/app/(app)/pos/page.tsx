@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase-client'
 import { useBranch } from '@/lib/branch-context'
 import { useBusiness } from '@/lib/business-context'
 import { getRecipeAvailability } from '@/lib/recipeAvailability'
+import { escapeHtml as esc } from '@/lib/escape-html'
 
 export default function POSPage() {
   const [products, setProducts] = useState<any[]>([])
@@ -384,10 +385,10 @@ export default function POSPage() {
 
   const printTicket = () => {
     if (!saleResult || !business) return
-    const items = saleResult.products.map((p: any) => `<tr><td style="padding:2px 0">${p.name} x${p.qty}</td><td style="text-align:right">${curr}${(p.price * p.qty).toFixed(2)}</td></tr>`).join('')
+    const items = saleResult.products.map((p: any) => `<tr><td style="padding:2px 0">${esc(p.name)} x${p.qty}</td><td style="text-align:right">${esc(curr)}${(p.price * p.qty).toFixed(2)}</td></tr>`).join('')
     const win = window.open('', '_blank', 'width=350,height=600')
     if (!win) return
-    win.document.write(`<html><head><title>Ticket</title><style>body{font-family:monospace;font-size:12px;padding:10px;max-width:300px;margin:0 auto}table{width:100%;border-collapse:collapse}.c{text-align:center}.line{border-top:1px dashed #000;margin:5px 0}</style></head><body><div class="c"><strong>${business.name}</strong><br>${new Date().toLocaleString('es')}<br>Ticket #${Date.now().toString().slice(-6)}</div><div class="line"></div><table>${items}</table><div class="line"></div><table><tr><td><strong>TOTAL</strong></td><td style="text-align:right"><strong>${curr}${saleResult.total.toFixed(2)}</strong></td></tr><tr><td>Método:</td><td style="text-align:right">${saleResult.method}</td></tr>${saleResult.method === 'efectivo' ? `<tr><td>Pagado:</td><td style="text-align:right">${curr}${(saleResult.total + saleResult.change).toFixed(2)}</td></tr><tr><td>Cambio:</td><td style="text-align:right">${curr}${saleResult.change.toFixed(2)}</td></tr>` : ''}</table><div class="line"></div><div class="c">¡Gracias por su compra!</div></body></html>`)
+    win.document.write(`<html><head><title>Ticket</title><style>body{font-family:monospace;font-size:12px;padding:10px;max-width:300px;margin:0 auto}table{width:100%;border-collapse:collapse}.c{text-align:center}.line{border-top:1px dashed #000;margin:5px 0}</style></head><body><div class="c"><strong>${esc(business.name)}</strong><br>${new Date().toLocaleString('es')}<br>Ticket #${Date.now().toString().slice(-6)}</div><div class="line"></div><table>${items}</table><div class="line"></div><table><tr><td><strong>TOTAL</strong></td><td style="text-align:right"><strong>${esc(curr)}${saleResult.total.toFixed(2)}</strong></td></tr><tr><td>Método:</td><td style="text-align:right">${esc(saleResult.method)}</td></tr>${saleResult.method === 'efectivo' ? `<tr><td>Pagado:</td><td style="text-align:right">${esc(curr)}${(saleResult.total + saleResult.change).toFixed(2)}</td></tr><tr><td>Cambio:</td><td style="text-align:right">${esc(curr)}${saleResult.change.toFixed(2)}</td></tr>` : ''}</table><div class="line"></div><div class="c">¡Gracias por su compra!</div></body></html>`)
     win.document.close()
     win.print()
   }
