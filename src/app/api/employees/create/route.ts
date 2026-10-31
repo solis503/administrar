@@ -15,6 +15,16 @@ export async function POST(req: Request) {
     if (password.length < 6) {
       return NextResponse.json({ error: 'La contraseña debe tener al menos 6 caracteres' }, { status: 400 })
     }
+    // Un dueño solo puede crear gerentes o vendedores (nunca otro "owner")
+    if (!['manager', 'seller'].includes(role)) {
+      return NextResponse.json({ error: 'Rol inválido' }, { status: 400 })
+    }
+    if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json({ error: 'Correo inválido' }, { status: 400 })
+    }
+    if (permissions !== undefined && permissions !== null && (typeof permissions !== 'object' || Array.isArray(permissions))) {
+      return NextResponse.json({ error: 'Permisos inválidos' }, { status: 400 })
+    }
 
     const supabase = createServerSupabase()
     const { data: { user } } = await supabase.auth.getUser()
