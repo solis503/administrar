@@ -6,6 +6,7 @@ import { useBranch } from '@/lib/branch-context'
 import { useBusiness } from '@/lib/business-context'
 import { getProductCostMap, calculateCOGS } from '@/lib/cogs'
 import SaleDetailModal from '@/components/SaleDetailModal'
+import { escapeHtml as esc } from '@/lib/escape-html'
 
 type Period = 'today' | 'week' | 'month' | 'custom'
 const STREAK_THRESHOLD = 4 // días con ventas que hay que registrar en la semana para mantener la racha
@@ -349,37 +350,37 @@ export default function ReportsPage() {
     }
     const rowsHtml = sales.map(s => `<tr>
       <td>${new Date(s.created_at).toLocaleString('es')}</td>
-      <td>${saleSummaryMap[s.id] || ''}</td>
-      <td style="text-align:right">${curr}${Number(s.total).toFixed(2)}</td>
-      <td>${s.payment_method}</td>
+      <td>${esc(saleSummaryMap[s.id] || '')}</td>
+      <td style="text-align:right">${esc(curr)}${Number(s.total).toFixed(2)}</td>
+      <td>${esc(s.payment_method)}</td>
       <td>${s.status === 'anulada' ? 'Anulada' : (Number(s.refunded_total) > 0 ? 'Con devolución' : 'OK')}</td>
     </tr>`).join('')
 
     const dailyRowsHtml = dailyBreakdown.map(d => `<tr>
-      <td>${d.label}</td>
-      <td style="text-align:right">${curr}${d.total.toFixed(2)}</td>
+      <td>${esc(d.label)}</td>
+      <td style="text-align:right">${esc(curr)}${d.total.toFixed(2)}</td>
     </tr>`).join('')
 
     const detailRowsHtml = saleItemsDetail.map(it => `<tr>
       <td>${new Date(it.date).toLocaleString('es')}</td>
-      <td>${it.name}</td>
+      <td>${esc(it.name)}</td>
       <td style="text-align:right">${it.qty}</td>
-      <td style="text-align:right">${curr}${it.unitPrice.toFixed(2)}</td>
-      <td style="text-align:right">${curr}${it.subtotal.toFixed(2)}</td>
+      <td style="text-align:right">${esc(curr)}${it.unitPrice.toFixed(2)}</td>
+      <td style="text-align:right">${esc(curr)}${it.subtotal.toFixed(2)}</td>
     </tr>`).join('')
 
     const shiftsRowsHtml = shifts.map(sh => `<tr>
-      <td>${branchNameMap[sh.branch_id] || '—'}</td>
+      <td>${esc(branchNameMap[sh.branch_id] || '—')}</td>
       <td>${new Date(sh.opened_at).toLocaleString('es')}</td>
       <td>${sh.closed_at ? new Date(sh.closed_at).toLocaleString('es') : '—'}</td>
-      <td style="text-align:right">${curr}${Number(sh.opening_amount).toFixed(2)}</td>
-      <td style="text-align:right">${curr}${Number(sh.expected_amount || 0).toFixed(2)}</td>
-      <td style="text-align:right">${curr}${Number(sh.closing_amount || 0).toFixed(2)}</td>
-      <td style="text-align:right;color:${Number(sh.difference || 0) === 0 ? '#111' : (Number(sh.difference || 0) > 0 ? '#2563eb' : '#dc2626')}">${curr}${Number(sh.difference || 0).toFixed(2)}</td>
-      <td>${closerNames[sh.closed_by] || '—'}</td>
+      <td style="text-align:right">${esc(curr)}${Number(sh.opening_amount).toFixed(2)}</td>
+      <td style="text-align:right">${esc(curr)}${Number(sh.expected_amount || 0).toFixed(2)}</td>
+      <td style="text-align:right">${esc(curr)}${Number(sh.closing_amount || 0).toFixed(2)}</td>
+      <td style="text-align:right;color:${Number(sh.difference || 0) === 0 ? '#111' : (Number(sh.difference || 0) > 0 ? '#2563eb' : '#dc2626')}">${esc(curr)}${Number(sh.difference || 0).toFixed(2)}</td>
+      <td>${esc(closerNames[sh.closed_by] || '—')}</td>
     </tr>`).join('')
 
-    win.document.write(`<html><head><title>Reporte - ${getPeriodLabel()}</title><style>
+    win.document.write(`<html><head><title>Reporte - ${esc(getPeriodLabel())}</title><style>
       body{font-family:Arial,sans-serif;padding:24px;color:#111}
       h1{font-size:20px;margin-bottom:2px}
       h2{font-size:15px;margin-top:28px;margin-bottom:4px}
@@ -393,13 +394,13 @@ export default function ReportsPage() {
       .card strong{font-size:16px;color:#111}
       @media print { h2 { page-break-before: auto; } }
     </style></head><body>
-      <h1>${business?.name || 'Reporte'}</h1>
-      <p class="sub">Reporte de ventas · ${getPeriodLabel()}</p>
+      <h1>${esc(business?.name || 'Reporte')}</h1>
+      <p class="sub">Reporte de ventas · ${esc(getPeriodLabel())}</p>
       <div class="summary">
-        <div class="card"><p>Ingresos</p><strong>${curr}${totalSales.toFixed(2)}</strong></div>
-        <div class="card"><p>Egresos (gastos)</p><strong>${curr}${egresos.toFixed(2)}</strong></div>
-        <div class="card"><p>Costo de Productos</p><strong>${curr}${cogs.toFixed(2)}</strong></div>
-        <div class="card"><p>Balance</p><strong>${curr}${balance.toFixed(2)}</strong></div>
+        <div class="card"><p>Ingresos</p><strong>${esc(curr)}${totalSales.toFixed(2)}</strong></div>
+        <div class="card"><p>Egresos (gastos)</p><strong>${esc(curr)}${egresos.toFixed(2)}</strong></div>
+        <div class="card"><p>Costo de Productos</p><strong>${esc(curr)}${cogs.toFixed(2)}</strong></div>
+        <div class="card"><p>Balance</p><strong>${esc(curr)}${balance.toFixed(2)}</strong></div>
       </div>
 
       ${showDailyBreakdown ? `<h2>📅 Ventas por Día</h2>
