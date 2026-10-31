@@ -1,11 +1,9 @@
-const CACHE_NAME = 'administrar-shell-v1'
-const SHELL_ASSETS = ['/', '/manifest.json']
+// v2: al cambiar el nombre se borran las copias viejas que guardaba la versión anterior
+// (incluían páginas con datos del negocio).
+const CACHE_NAME = 'administrar-static-v2'
 
-self.addEventListener('install', (event) => {
+self.addEventListener('install', () => {
   self.skipWaiting()
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_ASSETS).catch(() => {}))
-  )
 })
 
 self.addEventListener('activate', (event) => {
@@ -17,17 +15,32 @@ self.addEventListener('activate', (event) => {
   self.clients.claim()
 })
 
-// Network-first: siempre intenta traer datos frescos (precios, stock, etc.);
-// si no hay conexión, cae al cache como respaldo básico.
+// Solo se guardan archivos estáticos públicos (íconos, estilos, scripts).
+// Páginas, datos del negocio y llamadas a Supabase NUNCA se guardan en el celular.
+function isStaticAsset(url) {
+  return (
+    url.origin === self.location.origin &&
+    (url.pathname.startsWith('/_next/static/') ||
+      /^\/icon-.*\.png$/.test(url.pathname) ||
+      url.pathname === '/manifest.json')
+  )
+}
+
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return
+  const request = event.request
+  if (request.method !== 'GET') return
+  const url = new URL(request.url)
+  if (!isStaticAsset(url)) return // el navegador lo maneja normal, sin cache
+
   event.respondWith(
-    fetch(event.request)
+    fetch(request)
       .then((response) => {
-        const clone = response.clone()
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone)).catch(() => {})
+        if (response.ok) {
+          const clone = response.clone()
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone)).catch(() => {})
+        }
         return response
       })
-      .catch(() => caches.match(event.request))
+      .catch(() => caches.match(request))
   )
 })
