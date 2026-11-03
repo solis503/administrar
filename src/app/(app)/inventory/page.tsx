@@ -308,10 +308,14 @@ export default function InventoryPage() {
   const deleteSelected = async () => {
     if (selected.length === 0) return
     setDeleting(true)
-    const { error } = await supabase.from('products').delete().in('id', selected)
+    const { data: removed, error } = await supabase.from('products').delete().in('id', selected).select('id')
     setDeleting(false)
     if (error) {
       alert('No se pudo eliminar: ' + error.message)
+      return
+    }
+    if (!removed || removed.length === 0) {
+      alert('No se eliminó nada. Es posible que no tengas permiso o que el producto ya no exista. Recargá la página e intentá de nuevo.')
       return
     }
     setConfirmBulkDelete(false)
@@ -984,6 +988,18 @@ export default function InventoryPage() {
                 Cancelar
               </button>
             </div>
+            {editing && (
+              <button
+                onClick={() => {
+                  setSelected([editing.id])
+                  setShowForm(false)
+                  setConfirmBulkDelete(true)
+                }}
+                className="w-full mt-3 py-3 bg-red-50 text-red-600 font-semibold rounded-xl"
+              >
+                🗑️ Eliminar este producto
+              </button>
+            )}
           </div>
         </div>
       )}
