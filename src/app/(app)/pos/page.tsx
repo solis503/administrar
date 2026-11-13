@@ -120,7 +120,22 @@ export default function POSPage() {
 
   const openCloseShiftModal = async () => {
     if (!currentShift) return
-    const { data: sales } = await supabase.from('sales').select('id').eq('shift_id', currentShift.id).eq('status', 'completada')
+    // Se vuelve a consultar el turno por si otro dispositivo ya lo cerró o abrió uno nuevo
+    const { data: liveShift } = await supabase
+      .from('cash_shifts')
+      .select('*')
+      .eq('business_id', currentShift.business_id)
+      .eq('branch_id', currentShift.branch_id)
+      .eq('status', 'open')
+      .order('opened_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!liveShift) {
+      setCurrentShift(null)
+      return
+    }
+    if (liveShift.id !== currentShift.id) setCurrentShift(liveShift)
+    const { data: sales } = await supabase.from('sales').select('id').eq('shift_id', liveShift.id).eq('status', 'completada')
     const saleIds = (sales || []).map(s => s.id)
     let cashSum = 0
     if (saleIds.length > 0) {
@@ -135,11 +150,11 @@ export default function POSPage() {
     const { data: expenses } = await supabase
       .from('expenses')
       .select('amount')
-      .eq('branch_id', currentShift.branch_id)
-      .gte('created_at', currentShift.opened_at)
+      .eq('branch_id', liveShift.branch_id)
+      .gte('created_at', liveShift.opened_at)
     const expensesSum = (expenses || []).reduce((s, e) => s + Number(e.amount), 0)
     setExpensesInShift(expensesSum)
-    const expected = Number(currentShift.opening_amount) + cashSum - returnsSum - expensesSum
+    const expected = Number(liveShift.opening_amount) + cashSum - returnsSum - expensesSum
     setExpectedCash(expected)
     setClosingAmount(expected.toFixed(2))
     setShowCloseShift(true)
@@ -232,6 +247,23 @@ export default function POSPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No se pudo confirmar tu sesión. Cerrá sesión y volvé a entrar.')
 
+      // El turno pudo cerrarse o cambiar desde otro dispositivo: se confirma el turno abierto de verdad
+      const { data: liveShift } = await supabase
+        .from('cash_shifts')
+        .select('*')
+        .eq('business_id', business.id)
+        .eq('branch_id', selectedBranchId)
+        .eq('status', 'open')
+        .order('opened_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (!liveShift) {
+        setCurrentShift(null)
+        setShowPayment(false)
+        throw new Error('El turno de caja ya fue cerrado. Abrí un turno nuevo para seguir vendiendo.')
+      }
+      if (liveShift.id !== currentShift.id) setCurrentShift(liveShift)
+
       let payments: { method: string; amount: number }[] = []
       let paid = 0
       let change = 0
@@ -254,7 +286,7 @@ export default function POSPage() {
       const { data: sale, error: saleErr } = await supabase.from('sales').insert({
         business_id: business.id,
         branch_id: selectedBranchId,
-        shift_id: currentShift.id,
+        shift_id: liveShift.id,
         user_id: user.id,
         client_id: business.enable_loyalty_program ? (selectedClientId || null) : null,
         total: total,
